@@ -32,7 +32,7 @@
     <script src="https://unpkg.com/mammoth@1.11.0/mammoth.browser.min.js"></script>
 
     <!-- Inline Web App Manifest Data-URI -->
-    <link rel="manifest" href='data:application/manifest+json,{"name":"Cape Cod Birding Console","short_name":"CapeBirding","start_url":".","display":"standalone","background_color":"#020617","theme_color":"#0f172a","description":"Tactical bird tracking portal with live mapping.","icons":[{"src":"https://cdn-icons-png.flaticon.com/512/3069/3069172.png","sizes":"512x512","type":"image/png"}]}'>
+    <link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjoiQ2FwZSBDb2QgQmlyZGluZyBDb25zb2xlIiwic2hvcnRfbmFtZSI6IkNhcGVCaXJkaW5nIiwic3RhcnRfdXJsIjoiLiIsImRpc3BsYXkiOiJzdGFuZGFsb25lIiwiYmFja2dyb3VuZF9jb2xvciI6IiMwMjA2MTciLCJ0aGVtZV9jb2xvciI6IiMwZjE3MmEiLCJkZXNjcmlwdGlvbiI6IlRhY3RpY2FsIGJpcmQgdHJhY2tpbmcgcG9ydGFsIHdpdGggbGl2ZSBtYXBwaW5nLiIsImljb25zIjpbeyJzcmMiOiJodHRwczovL2Nkbi1pY29ucy1wbmcuZmxhdGljb24uY29tLzUxMi8zMDY5LzMwNjkxNzIucG5nIiwic2l6ZXMiOiI1MTJ4NTEyIiwidHlwZSI6ImltYWdlL3BuZyJ9XX0=">
 
     <style>
         /* Dark Theme Leaflet customization */
@@ -705,7 +705,11 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 const initMap = () => {
                     if (!mapContainerRef.current || mapInstance.current) return;
                     try {
-                        const map = L.map(mapContainerRef.current, { zoomControl: false }).setView([41.80, -70.30], 10);
+                        // maxZoom/minZoom must be set here explicitly: tile layers (which would
+                        // normally supply them) aren't added until the next effect runs, and
+                        // Leaflet throws "Map has no maxZoom specified" if setView/zoom happens
+                        // before any zoom bounds exist at all.
+                        const map = L.map(mapContainerRef.current, { zoomControl: false, minZoom: 3, maxZoom: 19 }).setView([41.80, -70.30], 10);
                         mapInstance.current = map;
                         markerLayerGroup.current = L.layerGroup().addTo(map);
                         L.control.zoom({ position: 'topright' }).addTo(map);
@@ -1713,7 +1717,8 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 let active = true;
                 async function fetchImage() {
                     try {
-                        const response = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(birdName)}`);
+                        const searchName = birdName.replace(/\s*\([^)]*\)\s*/g, '').trim() || birdName;
+                        const response = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(searchName)}`);
                         if (!response.ok) throw new Error('Wiki summary lookup error');
                         const data = await response.json();
                         const url = (data.thumbnail && data.thumbnail.source) ? data.thumbnail.source : null;
