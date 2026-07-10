@@ -44,9 +44,6 @@ Barnstable Clean Water Coalition Cranberry Bogs	41.6714674, -70.4275267	Canada G
             const [statusFilter, setStatusFilter] = useState('ALL'); 
             const [selectedLocation, setSelectedLocation] = useState('ALL');
             const [selectedBird, setSelectedBird] = useState('ALL');
-            const [sortBy, setSortBy] = useState('bird');
-            const [mapStyle, setMapStyle] = useState('dark');
-            const [toastMsg, setToastMsg] = useState('');
             
             const mapContainerRef = useRef(null);
             const mapInstance = useRef(null);
@@ -65,8 +62,6 @@ Barnstable Clean Water Coalition Cranberry Bogs	41.6714674, -70.4275267	Canada G
                     
                     const bird = cols[2].trim();
                     const id = `${currentLoc}-${bird}-${i}`;
-                    
-                    // A bird is 'seen' if it's in the lifeList OR manually marked
                     const isSeen = lifeList.has(bird) || manualSeen.has(id);
 
                     result.push({
@@ -82,6 +77,24 @@ Barnstable Clean Water Coalition Cranberry Bogs	41.6714674, -70.4275267	Canada G
                 return result;
             }, [rawData, lifeList, manualSeen]);
 
+            useEffect(() => {
+                if (mapInstance.current) return;
+                mapInstance.current = L.map(mapContainerRef.current).setView([41.7, -70.3], 10);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapInstance.current);
+                markerLayerGroup.current = L.layerGroup().addTo(mapInstance.current);
+            }, []);
+
+            useEffect(() => {
+                if (!markerLayerGroup.current) return;
+                markerLayerGroup.current.clearLayers();
+                birdRecords.forEach(r => {
+                    const coords = r.coordinates.split(',').map(Number);
+                    if (coords.length === 2 && !isNaN(coords[0])) {
+                        L.marker(coords).addTo(markerLayerGroup.current).bindPopup(r.bird);
+                    }
+                });
+            }, [birdRecords]);
+
             const filteredRecords = useMemo(() => {
                 return birdRecords.filter(r => {
                     const matchesSearch = r.bird.toLowerCase().includes(searchQuery.toLowerCase()) || r.locationName.toLowerCase().includes(searchQuery.toLowerCase());
@@ -89,40 +102,26 @@ Barnstable Clean Water Coalition Cranberry Bogs	41.6714674, -70.4275267	Canada G
                     const matchesBird = selectedBird === 'ALL' || r.bird === selectedBird;
                     if (statusFilter === 'SEEN' && !r.seen) return false;
                     if (statusFilter === 'UNSEEN' && r.seen) return false;
-                    if (statusFilter === 'RARE' && r.rare !== 'Y') return false;
                     return matchesSearch && matchesLoc && matchesBird;
                 });
             }, [birdRecords, searchQuery, statusFilter, selectedLocation, selectedBird]);
 
-            // Handle file upload for Life List
             const handleFileUpload = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     const text = event.target.result;
-                    const lines = text.split('\n');
-                    const foundBirds = new Set();
-                    // Assumes CSV eBird export: "Common Name" is often column 1 or 2
-                    lines.forEach(line => {
-                        const parts = line.split(',');
-                        if (parts.length > 1) {
-                            // Basic heuristic to grab common name
-                            const name = parts[1].replace(/"/g, '').trim();
-                            foundBirds.add(name);
-                        }
-                    });
+                    const foundBirds = new Set(text.split('\n').map(line => line.split(',')[0].replace(/"/g, '').trim()));
                     setLifeList(foundBirds);
-                    showToast("Life list imported!");
                 };
                 reader.readAsText(file);
             };
 
-            const toggleManualSeen = (record) => {
+            const toggleManualSeen = (id) => {
                 setManualSeen(prev => {
                     const next = new Set(prev);
-                    if (next.has(record.id)) next.delete(record.id);
-                    else next.add(record.id);
+                    if (next.has(id)) next.delete(id); else next.add(id);
                     return next;
                 });
             };
@@ -132,7 +131,7 @@ Barnstable Clean Water Coalition Cranberry Bogs	41.6714674, -70.4275267	Canada G
                     <header className="mb-8">
                         <h1 className="text-3xl font-black text-teal-400">CAPE COD BIRD SIGHTINGS</h1>
                         <p className="text-slate-400">Interactive Cape Cod Bird Sighting Portal</p>
-                        <button onClick={() => setShowSyncPanel(!showSyncPanel)} className="mt-4 bg-slate-800 px-4 py-2 rounded text-xs font-bold">Sync Data / Import CSV</button>
+                        <button onClick={() => setShowSyncPanel(!showSyncPanel)} className="mt-4 bg-slate-800 px-4 py-2 rounded text-xs font-bold hover:bg-slate-700">Sync Data / Import Life List CSV</button>
                     </header>
 
                     {showSyncPanel && (
@@ -143,15 +142,13 @@ Barnstable Clean Water Coalition Cranberry Bogs	41.6714674, -70.4275267	Canada G
                     )}
 
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* Map & Controls */}
                         <div className="lg:col-span-2 space-y-6">
                             <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800">
                                 <h2 className="text-lg font-bold mb-3">Sighting Map</h2>
-                                <div ref={mapContainerRef} className="h-64 w-full rounded-xl" />
+                                <div ref={mapContainerRef} className="h-64 w-full rounded-xl bg-slate-800" />
                             </div>
                         </div>
 
-                        {/* Species Ledger */}
                         <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 max-h-[800px] overflow-y-auto">
                             <h2 className="text-lg font-bold mb-4">Species Ledger</h2>
                             {filteredRecords.map(r => (
@@ -160,7 +157,7 @@ Barnstable Clean Water Coalition Cranberry Bogs	41.6714674, -70.4275267	Canada G
                                         <div className="font-bold">{r.bird}</div>
                                         <a href={`https://ebird.org/search?q=${encodeURIComponent(r.bird)}`} target="_blank" className="text-teal-400 text-[10px]">eBird ↗</a>
                                     </div>
-                                    <button onClick={(e) => { e.stopPropagation(); toggleManualSeen(r); }} className={`px-2 py-1 rounded text-[10px] ${r.seen ? 'bg-teal-500' : 'bg-slate-800'}`}>
+                                    <button onClick={(e) => { e.stopPropagation(); toggleManualSeen(r.id); }} className={`px-2 py-1 rounded text-[10px] ${r.seen ? 'bg-teal-500' : 'bg-slate-800'}`}>
                                         {r.seen ? 'Seen' : 'Mark'}
                                     </button>
                                 </div>
