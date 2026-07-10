@@ -392,12 +392,14 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             // per-bird overrides that persist even when the TSV/report data is re-imported.
             const [lifeList, setLifeList] = useState(() => storageGet('cbc_lifeList', DEFAULT_LIFE_LIST));
             const [seenOverrides, setSeenOverrides] = useState(() => storageGet('cbc_seenOverrides', {}));
+            const [hiddenLocations, setHiddenLocations] = useState(() => storageGet('cbc_hiddenLocations', []));
             const lifeListFileRef = useRef(null);
             const reportFileRef = useRef(null);
 
             useEffect(() => { storageSet('cbc_rawData', rawData); }, [rawData]);
             useEffect(() => { storageSet('cbc_lifeList', lifeList); }, [lifeList]);
             useEffect(() => { storageSet('cbc_seenOverrides', seenOverrides); }, [seenOverrides]);
+            useEffect(() => { storageSet('cbc_hiddenLocations', hiddenLocations); }, [hiddenLocations]);
 
             const lifeListSet = useMemo(() => new Set(lifeList.map(normalizeBirdName)), [lifeList]);
 
@@ -443,6 +445,47 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     delete next[overrideKey];
                     return next;
                 });
+            };
+
+            // --- Hotspot management: hide (reversible, also excluded from future eBird syncs
+            // so it doesn't silently come back) or permanently delete all records for a hotspot.
+            const hideLocation = (locationName) => {
+                setHiddenLocations(prev => prev.includes(locationName) ? prev : [...prev, locationName]);
+                if (selectedLocation === locationName) setSelectedLocation('ALL');
+                showToast(`Hid "${locationName}". Restore it any time in Settings.`);
+            };
+
+            const unhideLocation = (locationName) => {
+                setHiddenLocations(prev => prev.filter(l => l !== locationName));
+                showToast(`Restored "${locationName}".`);
+            };
+
+            const deleteLocation = (locationName) => {
+                const updated = birdRecords.filter(rec => rec.locationName !== locationName);
+                setRawData(recordsToTSV(updated));
+                setHiddenLocations(prev => prev.filter(l => l !== locationName));
+                if (selectedLocation === locationName) setSelectedLocation('ALL');
+                showToast(`Deleted all records for "${locationName}".`);
+            };
+
+            // --- Date range filter ------------------------------------------------------------
+            const [dateRangeFilter, setDateRangeFilter] = useState('ALL'); // ALL | 24H | 7D | 30D | CUSTOM
+            const [customDateFrom, setCustomDateFrom] = useState('');
+            const [customDateTo, setCustomDateTo] = useState('');
+
+            const isWithinDateRange = (record) => {
+                if (dateRangeFilter === 'ALL') return true;
+                const recordDate = new Date(record.lastReported || 0);
+                if (isNaN(recordDate)) return true; // don't hide rows with unparseable dates
+                if (dateRangeFilter === 'CUSTOM') {
+                    if (customDateFrom && recordDate < new Date(customDateFrom)) return false;
+                    if (customDateTo && recordDate > new Date(new Date(customDateTo).setHours(23, 59, 59, 999))) return false;
+                    return true;
+                }
+                const days = dateRangeFilter === '24H' ? 1 : dateRangeFilter === '7D' ? 7 : 30;
+                const cutoff = new Date();
+                cutoff.setDate(cutoff.getDate() - days);
+                return recordDate >= cutoff;
             };
             
             const [searchQuery, setSearchQuery] = useState('');
@@ -500,14 +543,17 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 }
             }, [rawData]);
 
-            // birdRecords enriched with a computed `seen` field (life list match, or manual override)
+            // birdRecords enriched with a computed `seen` field (life list match, or manual override),
+            // with hidden hotspots excluded so they disappear from stats, map, and the list entirely.
             const enrichedRecords = useMemo(() => {
-                return birdRecords.map(r => {
-                    const overrideKey = `${r.locationName}|${r.bird}`.toLowerCase();
-                    const isOverridden = Object.prototype.hasOwnProperty.call(seenOverrides, overrideKey);
-                    return { ...r, seen: getSeen(r), isOverridden };
-                });
-            }, [birdRecords, lifeListSet, seenOverrides]);
+                return birdRecords
+                    .filter(r => !hiddenLocations.includes(r.locationName))
+                    .map(r => {
+                        const overrideKey = `${r.locationName}|${r.bird}`.toLowerCase();
+                        const isOverridden = Object.prototype.hasOwnProperty.call(seenOverrides, overrideKey);
+                        return { ...r, seen: getSeen(r), isOverridden };
+                    });
+            }, [birdRecords, lifeListSet, seenOverrides, hiddenLocations]);
 
             const stats = useMemo(() => {
                 const total = enrichedRecords.length;
@@ -565,7 +611,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     const matchesLocation = selectedLocation === 'ALL' || r.locationName === selectedLocation;
                     const matchesBirdSelection = selectedBird === 'ALL' || r.bird === selectedBird;
 
-                    if (!matchesSearch || !matchesLocation || !matchesBirdSelection) return false;
+                    if (!matchesSearch || !matchesLocation || !matchesBirdSelection || !isWithinDateRange(r)) return false;
 
                     if (statusFilter === 'SEEN') return r.seen === 'Y';
                     if (statusFilter === 'UNSEEN') return r.seen === 'N';
@@ -579,7 +625,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     if (sortBy === 'status') return b.seen.localeCompare(a.seen);
                     return 0;
                 });
-            }, [enrichedRecords, searchQuery, statusFilter, selectedLocation, selectedBird, sortBy]);
+            }, [enrichedRecords, searchQuery, statusFilter, selectedLocation, selectedBird, sortBy, dateRangeFilter, customDateFrom, customDateTo]);
 
             const mapLocations = useMemo(() => {
                 const locMap = {};
@@ -709,9 +755,13 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
 
                     const isFocused = selectedLocation === loc.name;
                     const markerColor = loc.unseenRares > 0 ? '#f59e0b' : (loc.seen === loc.total ? '#10b981' : '#0d9488');
+                    // Radius scales with species count at the hotspot (more birds recorded = bigger dot),
+                    // clamped to a sensible range so a handful of species and a hundred both read clearly.
+                    const baseRadius = Math.max(6, Math.min(22, 6 + Math.sqrt(loc.total) * 2.2));
+                    const radius = isFocused ? baseRadius + 5 : baseRadius;
 
                     const marker = L.circleMarker([lat, lng], {
-                        radius: isFocused ? 13 : 7,
+                        radius,
                         fillColor: markerColor,
                         color: isFocused ? '#ffffff' : '#020617',
                         weight: isFocused ? 3 : 1.5,
@@ -722,6 +772,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                         <div class="text-xs">
                             <h4 class="font-bold text-teal-400">📍 ${loc.name}</h4>
                             <div class="mt-1">Seen Progress: <strong>${loc.seen} / ${loc.total}</strong></div>
+                            ${loc.unseenRares > 0 ? `<div class="mt-1 text-amber-400">⚠️ ${loc.unseenRares} unseen rare target(s)</div>` : ''}
                         </div>
                     `);
 
@@ -777,6 +828,32 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             const showToast = (msg) => {
                 setToastMsg(msg);
                 setTimeout(() => setToastMsg(''), 3000);
+            };
+
+            // --- Export: current filtered list as a downloadable CSV -------------------------
+            const handleExportCSV = () => {
+                if (filteredRecords.length === 0) {
+                    showToast("Nothing to export — adjust filters first.");
+                    return;
+                }
+                const escapeCsv = (val) => {
+                    const s = String(val ?? '');
+                    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+                };
+                const header = ['Location Name', 'Coordinates', 'Bird', 'Rare (Y/N)', 'Last Reported', 'Seen (Y/N)'];
+                const rows = filteredRecords.map(r => [r.locationName, r.coordinates, r.bird, r.rare, r.lastReported, r.seen].map(escapeCsv).join(','));
+                const csv = [header.join(','), ...rows].join('\n');
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const stamp = new Date().toISOString().slice(0, 10);
+                a.href = url;
+                a.download = `cape-cod-birds-${stamp}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showToast(`Exported ${filteredRecords.length} record(s).`);
             };
 
             // --- Import: eBird life list CSV -------------------------------------------------
@@ -885,8 +962,11 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             // so hotspots and species not present in the uploaded report are kept, and manual
             // seen overrides (keyed by location+bird) are untouched.
             const mergeReportEntries = (entries, { silent = false } = {}) => {
+                // Hidden hotspots stay excluded from future merges too, so a daily eBird sync
+                // (or re-uploading the same report) doesn't silently bring them back.
+                entries = entries.filter(e => !hiddenLocations.includes(e.locationName));
                 if (entries.length === 0) {
-                    if (!silent) showToast("No recognizable sighting rows found in that file.");
+                    if (!silent) showToast("No new sightings to merge (all matched hidden hotspots, or the file had no recognizable rows).");
                     return;
                 }
                 const byKey = new Map(birdRecords.map(r => [`${r.locationName}|${r.bird}`.toLowerCase(), r]));
@@ -1029,6 +1109,22 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                     </button>
                                 </div>
                                 <p className="text-[9px] text-slate-500">Auto-syncs once a day whenever this page is opened (this is a static PWA with no server, so it can't run in the background — opening the app is what triggers the daily check). Pulls both recent and notable/rare sightings for your region and merges them in without touching existing entries or manual seen overrides.</p>
+
+                                <div className="border-t border-slate-800 pt-4">
+                                    <h4 className="text-xs font-bold text-slate-200 mb-2">Hidden Hotspots ({hiddenLocations.length})</h4>
+                                    {hiddenLocations.length === 0 ? (
+                                        <p className="text-[10px] text-slate-500">None hidden. Use the 🙈 icon on any hotspot card to hide it — hidden hotspots also stay excluded from future eBird syncs.</p>
+                                    ) : (
+                                        <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                                            {hiddenLocations.map(loc => (
+                                                <div key={loc} className="flex items-center justify-between gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-[11px]">
+                                                    <span className="text-slate-300 truncate">{loc}</span>
+                                                    <button onClick={() => unhideLocation(loc)} className="text-teal-400 hover:underline font-bold shrink-0">Restore</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         )}
                         {showImportPanel && (
@@ -1140,6 +1236,19 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
                                 <div className="lg:col-span-8 bg-slate-950 border border-slate-800 rounded-2xl min-h-[400px] relative overflow-hidden z-10">
                                     <div ref={mapContainerRef} className="w-full h-full min-h-[400px]" />
+                                    <div className="absolute bottom-3 left-3 z-[500] bg-slate-950/90 border border-slate-800 rounded-xl px-3 py-2.5 text-[10px] space-y-1.5 backdrop-blur-sm">
+                                        <div className="font-bold text-slate-300 uppercase tracking-wider text-[9px] mb-1.5">Legend</div>
+                                        <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#f59e0b' }} /><span className="text-slate-400">Unseen rare target here</span></div>
+                                        <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#10b981' }} /><span className="text-slate-400">Fully seen</span></div>
+                                        <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#0d9488' }} /><span className="text-slate-400">Partially seen</span></div>
+                                        <div className="flex items-center gap-2 pt-1 border-t border-slate-800 mt-1.5">
+                                            <span className="flex items-center gap-0.5">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-slate-500 inline-block" />
+                                                <span className="w-3 h-3 rounded-full bg-slate-500 inline-block" />
+                                            </span>
+                                            <span className="text-slate-400">Size = species count</span>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div className="lg:col-span-4 bg-slate-950/40 border border-slate-800/80 rounded-2xl p-4 flex flex-col justify-between space-y-4">
@@ -1194,7 +1303,23 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                                 <div key={idx} onClick={() => setSelectedLocation(isFocused ? 'ALL' : loc.name)} className={`p-3 rounded-xl border transition cursor-pointer text-xs ${isFocused ? 'bg-slate-850 border-teal-500 shadow-md' : 'bg-slate-950 border-slate-800 hover:border-slate-700'} ${!loc.isActive ? 'opacity-40' : ''}`}>
                                                     <div className="flex justify-between items-start gap-2 mb-1">
                                                         <h3 className="font-bold text-slate-200 leading-tight">{loc.name}</h3>
-                                                        {loc.unseenRares > 0 && loc.isActive && <span className="bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1.5 py-0.5 rounded text-[8px] font-black">⚠️ {loc.unseenRares} Rare Target</span>}
+                                                        <div className="flex items-center gap-1 shrink-0">
+                                                            {loc.unseenRares > 0 && loc.isActive && <span className="bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1.5 py-0.5 rounded text-[8px] font-black">⚠️ {loc.unseenRares} Rare Target</span>}
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); hideLocation(loc.name); }}
+                                                                title="Hide this hotspot (can restore in Settings)"
+                                                                className="p-1 bg-slate-900 border border-slate-800 hover:text-amber-400 rounded text-slate-500 transition text-[9px]"
+                                                            >
+                                                                🙈
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); if (confirm(`Permanently delete all ${loc.total} record(s) for "${loc.name}"? This can't be undone.`)) deleteLocation(loc.name); }}
+                                                                title="Permanently delete this hotspot and all its records"
+                                                                className="p-1 bg-slate-900 border border-slate-800 hover:text-rose-400 rounded text-slate-500 transition text-[9px]"
+                                                            >
+                                                                🗑️
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                     <div className="flex justify-between items-center text-[10px] text-slate-400 mt-1.5">
                                                         <span>Species: <strong>{loc.total}</strong></span>
@@ -1214,7 +1339,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                         <input type="text" placeholder="Search species..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-xl px-4 py-2 text-xs focus:outline-none" />
                                         <select value={selectedLocation} onChange={(e) => setSelectedLocation(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-300 rounded-xl px-4 py-2 text-xs focus:outline-none">
                                             <option value="ALL">📍 All Hotspots</option>
-                                            {Array.from(new Set(birdRecords.map(r => r.locationName))).sort().map((loc, idx) => (
+                                            {Array.from(new Set(enrichedRecords.map(r => r.locationName))).sort().map((loc, idx) => (
                                                 <option key={idx} value={loc}>{loc}</option>
                                             ))}
                                         </select>
@@ -1233,6 +1358,29 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                                 <option value="date">Date</option>
                                             </select>
                                         </div>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-800/60 mt-1">
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                            <span className="text-xs text-slate-400 mr-0.5">Reported:</span>
+                                            {[
+                                                { id: 'ALL', label: 'Any time' },
+                                                { id: '24H', label: 'Last 24h' },
+                                                { id: '7D', label: 'Last 7d' },
+                                                { id: '30D', label: 'Last 30d' },
+                                                { id: 'CUSTOM', label: 'Custom' }
+                                            ].map(opt => (
+                                                <button key={opt.id} onClick={() => setDateRangeFilter(opt.id)} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${dateRangeFilter === opt.id ? 'bg-teal-500 text-slate-950' : 'bg-slate-950 text-slate-400 hover:text-white'}`}>{opt.label}</button>
+                                            ))}
+                                            {dateRangeFilter === 'CUSTOM' && (
+                                                <div className="flex items-center gap-1.5 pl-1">
+                                                    <input type="date" value={customDateFrom} onChange={(e) => setCustomDateFrom(e.target.value)} className="bg-slate-950 border border-slate-800 rounded-lg text-slate-300 px-2 py-1 text-[10px] focus:outline-none" />
+                                                    <span className="text-slate-500 text-[10px]">to</span>
+                                                    <input type="date" value={customDateTo} onChange={(e) => setCustomDateTo(e.target.value)} className="bg-slate-950 border border-slate-800 rounded-lg text-slate-300 px-2 py-1 text-[10px] focus:outline-none" />
+                                                </div>
+                                            )}
+                                        </div>
+                                        <button onClick={handleExportCSV} title="Export current filtered list as CSV" className="bg-slate-950 border border-slate-800 hover:border-teal-500 hover:text-teal-400 text-slate-400 px-3 py-1 rounded-lg text-[10px] font-bold transition">⬇ Export CSV</button>
                                     </div>
                                     
                                     {/* Species filter reset banner */}
@@ -1344,22 +1492,40 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             );
         }
 
+        // Shared thumbnail cache (module-level, outside the component) so switching filters or
+        // re-mounting rows doesn't re-fetch images already looked up this session. Persisted to
+        // localStorage too, so it survives reloads. null = "looked up, no image found" (also cached,
+        // to avoid retrying known-missing birds every render).
+        const THUMBNAIL_CACHE_KEY = 'cbc_thumbnailCache';
+        let thumbnailCache = (() => {
+            try {
+                const raw = window.localStorage.getItem(THUMBNAIL_CACHE_KEY);
+                return raw ? JSON.parse(raw) : {};
+            } catch (e) { return {}; }
+        })();
+        const persistThumbnailCache = () => {
+            try { window.localStorage.setItem(THUMBNAIL_CACHE_KEY, JSON.stringify(thumbnailCache)); } catch (e) { /* ignore */ }
+        };
+
         // Live image lookup utility component via Wikipedia summaries API
         function BirdThumbnail({ birdName }) {
-            const [imgUrl, setImgUrl] = useState(null);
-            const [loading, setLoading] = useState(true);
+            const cached = Object.prototype.hasOwnProperty.call(thumbnailCache, birdName) ? thumbnailCache[birdName] : undefined;
+            const [imgUrl, setImgUrl] = useState(cached !== undefined ? cached : null);
+            const [loading, setLoading] = useState(cached === undefined);
 
             useEffect(() => {
+                if (cached !== undefined) return; // already resolved (image URL or known-missing)
                 let active = true;
                 async function fetchImage() {
                     try {
                         const response = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(birdName)}`);
                         if (!response.ok) throw new Error('Wiki summary lookup error');
                         const data = await response.json();
+                        const url = (data.thumbnail && data.thumbnail.source) ? data.thumbnail.source : null;
+                        thumbnailCache[birdName] = url;
+                        persistThumbnailCache();
                         if (active) {
-                            if (data.thumbnail && data.thumbnail.source) {
-                                setImgUrl(data.thumbnail.source);
-                            }
+                            setImgUrl(url);
                             setLoading(false);
                         }
                     } catch (e) {
@@ -1453,13 +1619,13 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
 
         // Strips parenthetical subspecies/form qualifiers and normalizes case for matching,
         // e.g. "Willet (Eastern)" -> "willet", so life-list comparisons aren't thrown off by them.
+        function normalizeBirdName(name) {
+            return (name || "").replace(/\s*\([^)]*\)\s*/g, "").trim().toLowerCase();
+        }
+
         // Formats a Date as "Thursday, July 9, 2026" to match this app's Last Reported style.
         function formatLongDate(dt) {
             return isNaN(dt) ? '' : dt.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-        }
-
-        function normalizeBirdName(name) {
-            return (name || "").replace(/\s*\([^)]*\)\s*/g, "").trim().toLowerCase();
         }
 
         // Parses an uploaded eBird life list CSV export and returns a sorted array of unique
