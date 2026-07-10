@@ -27,6 +27,9 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
+    <!-- Mammoth.js CDN (for reading .docx report uploads in-browser) -->
+    <script src="https://unpkg.com/mammoth@1.11.0/mammoth.browser.min.js"></script>
+
     <!-- Inline Web App Manifest Data-URI -->
     <link rel="manifest" href='data:application/manifest+json,{"name":"Cape Cod Birding Console","short_name":"CapeBirding","start_url":".","display":"standalone","background_color":"#020617","theme_color":"#0f172a","description":"Tactical bird tracking portal with live mapping.","icons":[{"src":"https://cdn-icons-png.flaticon.com/512/3069/3069172.png","sizes":"512x512","type":"image/png"}]}'>
 
@@ -53,232 +56,282 @@
     <script type="text/babel">
         const { useState, useMemo, useRef, useEffect } = React;
 
-        const INITIAL_RAW_DATA = `Location Name	Coordinates	Bird	Rare (Y/N)	Last Reported	Seen (Y/N)
-Barnstable Clean Water Coalition Cranberry Bogs	41.6714674, -70.4275267	Canada Goose	N	Thursday, July 9, 2026	Y
-		Mute Swan	N	Thursday, July 9, 2026	Y
-		Mallard	N	Thursday, July 9, 2026	Y
-		Mourning Dove	N	Thursday, July 9, 2026	Y
-		Great Egret	N	Thursday, July 9, 2026	Y
-		Great Blue Heron	N	Thursday, July 9, 2026	Y
-		Red-bellied Woodpecker	N	Thursday, July 9, 2026	Y
-		Red-tailed Hawk	N	Thursday, July 9, 2026	Y
-Santuit Pond Preserve	41.6508633, -70.4546785	Canada Goose	N	Wednesday, July 8, 2026	Y
-Water Street Marsh, Yarmouth	41.7107104, -70.2602398	Canada Goose	N	Thursday, July 9, 2026	Y
-		Chimney Swift	N	Thursday, July 9, 2026	Y
-		Belted Kingfisher	N	Thursday, July 9, 2026	Y
-Woods Hole--Great Harbor	41.5230215, -70.6763148	Canada Goose	N	Wednesday, July 8, 2026	Y
-		Mallard	N	Wednesday, July 8, 2026	Y
-		Surf Scoter	N	Wednesday, July 8, 2026	N
-Cape Cod Canal Bike Paths, Buzzards Bay	41.74326, -70.612899	Mute Swan	N	Wednesday, July 8, 2026	Y
-		Rock Pigeon	N	Wednesday, July 8, 2026	Y
-		Roseate Tern	N	Wednesday, July 8, 2026	N
-Cold Brook Preserve	41.6766572, -70.0687389	Mute Swan	N	Thursday, July 9, 2026	Y
-		American Herring Gull	N	Thursday, July 9, 2026	Y
-		Black-crowned Night Heron	N	Thursday, July 9, 2026	Y
-		Snowy Egret	N	Thursday, July 9, 2026	Y
-		Great Blue Heron	N	Thursday, July 9, 2026	Y
-		Osprey	N	Thursday, July 9, 2026	Y
-		Northern Harrier	N	Thursday, July 9, 2026	Y
-		Eastern Phoebe	N	Thursday, July 9, 2026	Y
-Pogorelc Sanctuary	41.699604, -70.355493	Wood Duck	N	Wednesday, July 8, 2026	Y
-		Mallard	N	Wednesday, July 8, 2026	Y
-		Yellow-crowned Night Heron	Y	Thursday, July 9, 2026	Y
-		Black-crowned Night Heron	N	Wednesday, July 8, 2026	Y
-Woodneck Beach and Marsh	41.5750275, -70.6413388	Mallard	N	Wednesday, July 8, 2026	Y
-Bell's Neck Conservation Area	41.6840342, -70.1129007	American Black Duck	N	Thursday, July 9, 2026	N
-		Killdeer	N	Thursday, July 9, 2026	Y
-		Least Sandpiper	N	Thursday, July 9, 2026	Y
-		Laughing Gull	N	Thursday, July 9, 2026	Y
-		Black-crowned Night Heron	N	Thursday, July 9, 2026	Y
-		Snowy Egret	N	Thursday, July 9, 2026	Y
-		Great Egret	N	Thursday, July 9, 2026	Y
-		Osprey	N	Thursday, July 9, 2026	Y
-		Red-bellied Woodpecker	N	Thursday, July 9, 2026	Y
-		Downy Woodpecker	N	Thursday, July 9, 2026	Y
-		Northern Flicker	N	Thursday, July 9, 2026	Y
-		Eastern Wood-Pewee	N	Thursday, July 9, 2026	Y
-High Head, Pilgrim Heights	42.0563031, -70.1161194	American Black Duck	N	Wednesday, July 8, 2026	N
-		Red-breasted Merganser	N	Wednesday, July 8, 2026	Y
-		Spotted Sandpiper	N	Wednesday, July 8, 2026	Y
-		Common Loon	N	Wednesday, July 8, 2026	Y
-Old Wharf Rd. Marshes Chatham	41.7011872, -69.9513489	American Black Duck	N	Thursday, July 9, 2026	N
-		Killdeer	N	Thursday, July 9, 2026	Y
-		Green Heron	N	Thursday, July 9, 2026	Y
-Wellfleet Bay Wildlife Sanctuary	41.8825315, -69.995712	American Black Duck	N	Thursday, July 9, 2026	N
-		Killdeer	N	Thursday, July 9, 2026	Y
-		Semipalmated Plover	N	Thursday, July 9, 2026	N
-		Piping Plover	N	Thursday, July 9, 2026	N
-		Short-billed Dowitcher	N	Thursday, July 9, 2026	N
-		Semipalmated Sandpiper	N	Thursday, July 9, 2026	N
-		Yellow-crowned Night Heron	Y	Thursday, July 9, 2026	Y
-		Little Blue Heron	Y	Thursday, July 9, 2026	Y
-		Hairy Woodpecker	N	Thursday, July 9, 2026	Y
-Wellfleet Town Pier	41.93002, -70.0276762	American Black Duck	N	Thursday, July 9, 2026	N
-		Rock Pigeon	N	Thursday, July 9, 2026	Y
-		Laughing Gull	N	Thursday, July 9, 2026	Y
-		Ring-billed Gull	N	Thursday, July 9, 2026	Y
-		Double-crested Cormorant	N	Thursday, July 9, 2026	Y
-		Osprey	N	Thursday, July 9, 2026	Y
-		Great Blue Heron	N	Thursday, July 9, 2026	Y
-First Encounter Beach	41.8215025, -70.0037241	Common Eider	N	Thursday, July 9, 2026	N
-		Black Scoter	N	Thursday, July 9, 2026	Y
-		American Oystercatcher	N	Thursday, July 9, 2026	N
-		Semipalmated Plover	N	Thursday, July 9, 2026	N
-		Piping Plover	N	Thursday, July 9, 2026	N
-		Hudsonian Whimbrel	N	Thursday, July 9, 2026	N
-		Short-billed Dowitcher	N	Thursday, July 9, 2026	N
-		Spotted Sandpiper	N	Thursday, July 9, 2026	Y
-		Lesser Yellowlegs	N	Thursday, July 9, 2026	Y
-		Least Sandpiper	N	Thursday, July 9, 2026	Y
-		Bonaparte's Gull	N	Thursday, July 9, 2026	N
-		Ring-billed Gull	N	Thursday, July 9, 2026	Y
-		Great Black-backed Gull	N	Thursday, July 9, 2026	Y
-		Bridled Tern	Y	Thursday, July 9, 2026	N
-		Forster's Tern	N	Thursday, July 9, 2026	Y
-		Red-throated Loon	N	Thursday, July 9, 2026	N
-		Common Loon	N	Thursday, July 9, 2026	Y
-		Wilson's Storm-Petrel	N	Thursday, July 9, 2026	N
-		Cory's Shearwater	N	Thursday, July 9, 2026	N
-		Great Shearwater	N	Thursday, July 9, 2026	N
-		Sooty Shearwater	N	Thursday, July 9, 2026	N
-		Manx Shearwater	N	Thursday, July 9, 2026	N
-		Northern Gannet	N	Thursday, July 9, 2026	N
-		Great Blue Heron	N	Thursday, July 9, 2026	Y
-		Long-tailed Jaeger	Y	Thursday, July 9, 2026	N
-		South Polar Skua	Y	Thursday, July 9, 2026	N
-Race Point	42.0691855, -70.2381706	Common Eider	N	Thursday, July 9, 2026	N
-		White-winged Scoter	N	Thursday, July 9, 2026	N
-		Red-breasted Merganser	N	Thursday, July 9, 2026	Y
-		Piping Plover	N	Thursday, July 9, 2026	N
-		Bonaparte's Gull	N	Thursday, July 9, 2026	N
-		Ring-billed Gull	N	Thursday, July 9, 2026	Y
-		Great Black-backed Gull	N	Thursday, July 9, 2026	Y
-		Lesser Black-backed Gull	N	Thursday, July 9, 2026	Y
-		Iceland Gull	N	Thursday, July 9, 2026	N
-		Black Tern	N	Thursday, July 9, 2026	N
-		Arctic Tern	N	Thursday, July 9, 2026	N
-		Roseate Tern	N	Thursday, July 9, 2026	N
-		Common Loon	N	Thursday, July 9, 2026	Y
-		Wilson's Storm-Petrel	N	Thursday, July 9, 2026	N
-		Cory's Shearwater	N	Thursday, July 9, 2026	N
-		Great Shearwater	N	Thursday, July 9, 2026	N
-		Sooty Shearwater	N	Thursday, July 9, 2026	N
-		Manx Shearwater	N	Thursday, July 9, 2026	N
-		South Polar Skua	Y	Thursday, July 9, 2026	N
-Head of the Meadow Beach, N. Truro	42.0522244, -70.0795126	Black Scoter	N	Wednesday, July 8, 2026	Y
-		Sooty Shearwater	N	Wednesday, July 8, 2026	N
-563 Main St, Harwich	41.686806, -70.088225	Wild Turkey	N	Wednesday, July 8, 2026	Y
-95 Race Point Road, Provincetown	42.0623745, -70.1914677	Wild Turkey	N	Wednesday, July 8, 2026	Y
-PCT Old Colony Trail 3–99 Rear Howland, Provincetown	42.061626, -70.178976	Wild Turkey	N	Wednesday, July 8, 2026	Y
-		Black-billed Cuckoo	N	Wednesday, July 8, 2026	N
-		Hairy Woodpecker	N	Wednesday, July 8, 2026	Y
-		Broad-winged Hawk	N	Wednesday, July 8, 2026	N
-Provincetown Harbor	42.0476822, -70.1639271	Rock Pigeon	N	Wednesday, July 8, 2026	Y
-West Dennis Beach	41.65, -70.189	Rock Pigeon	N	Wednesday, July 8, 2026	Y
-		Killdeer	N	Wednesday, July 8, 2026	Y
-17 Lakeside Terrace, Harwich	41.7018115, -70.046262	Mourning Dove	N	Wednesday, July 8, 2026	Y
-		Green Heron	N	Wednesday, July 8, 2026	Y
-		Northern Flicker	N	Wednesday, July 8, 2026	Y
-70 Church Road, Eastham	41.8605272, -69.9916186	Mourning Dove	N	Wednesday, July 8, 2026	Y
-800–842 Iyannough Rd, Barnstable	41.670433, -70.299134	Mourning Dove	N	Wednesday, July 8, 2026	Y
-		Great Blue Heron	N	Wednesday, July 8, 2026	Y
-Buck's Creek	41.673952, -70.0011545	Mourning Dove	N	Wednesday, July 8, 2026	Y
-		American Oystercatcher	N	Wednesday, July 8, 2026	N
-		Killdeer	N	Wednesday, July 8, 2026	Y
-		Spotted Sandpiper	N	Wednesday, July 8, 2026	Y
-		Willet (Eastern)	N	Wednesday, July 8, 2026	Y
-		Greater Yellowlegs	N	Wednesday, July 8, 2026	Y
-		Laughing Gull	N	Wednesday, July 8, 2026	Y
-		American Herring Gull	N	Wednesday, July 8, 2026	Y
-		Great Black-backed Gull	N	Wednesday, July 8, 2026	Y
-		Least Tern	N	Wednesday, July 8, 2026	N
-		Common Tern	N	Wednesday, July 8, 2026	Y
-		Double-crested Cormorant	N	Wednesday, July 8, 2026	Y
-		Glossy Ibis	N	Wednesday, July 8, 2026	Y
-		Snowy Egret	N	Wednesday, July 8, 2026	Y
-		Great Egret	N	Wednesday, July 8, 2026	Y
-Camp Edwards: KD Range Area	41.6982516, -70.5351875	Eastern Whip-poor-will	N	Wednesday, July 8, 2026	N
-2–6 S Orleans Rd, Orleans	41.791161, -69.987078	Chimney Swift	N	Wednesday, July 8, 2026	Y
-Cape Cod Canal--Herring Run	41.7736001, -70.560143	Chimney Swift	N	Wednesday, July 8, 2026	Y
-		Black Tern	N	Wednesday, July 8, 2026	N
-		Forster's Tern	N	Wednesday, July 8, 2026	Y
-		Roseate Tern	N	Wednesday, July 8, 2026	N
-		Turkey Vulture	N	Wednesday, July 8, 2026	Y
-		Broad-winged Hawk	N	Wednesday, July 8, 2026	N
-		Red-shouldered Hawk	N	Wednesday, July 8, 2026	Y
-Mayflower St, Provincetown	42.052353, -70.191056	Chimney Swift	N	Wednesday, July 8, 2026	Y
-		Turkey Vulture	N	Wednesday, July 8, 2026	Y
-Stony Beach, Woods Hole	41.528885, -70.6740189	Chimney Swift	N	Wednesday, July 8, 2026	Y
-33 Beach Plum Circle, Harwich	41.7039059, -70.0442548	Ruby-throated Hummingbird	N	Wednesday, July 8, 2026	Y
-D&F Clapp's House, Brewster	41.737297, -70.088562	Ruby-throated Hummingbird	N	Wednesday, July 8, 2026	Y
-		Red-bellied Woodpecker	N	Wednesday, July 8, 2026	Y
-		Downy Woodpecker	N	Wednesday, July 8, 2026	Y
-Thompson's Field--North of Cape Cod Rail Trail	41.6906041, -70.053463	Ruby-throated Hummingbird	N	Wednesday, July 8, 2026	Y
-		Northern Flicker	N	Wednesday, July 8, 2026	Y
-		Red-tailed Hawk	N	Wednesday, July 8, 2026	Y
-Wequassett Resort And Golf Club, Harwich	41.721876, -69.997136	Ruby-throated Hummingbird	N	Wednesday, July 8, 2026	Y
-		Spotted Sandpiper	N	Wednesday, July 8, 2026	Y
-		Double-crested Cormorant	N	Wednesday, July 8, 2026	Y
-Forest Beach and Conservation Lands, Chatham	41.6700588, -70.0253749	American Oystercatcher	N	Wednesday, July 8, 2026	N
-		Piping Plover	N	Wednesday, July 8, 2026	N
-		Hudsonian Whimbrel	N	Wednesday, July 8, 2026	N
-		Greater Yellowlegs	N	Wednesday, July 8, 2026	Y
-		Least Tern	N	Wednesday, July 8, 2026	N
-		Green Heron	N	Wednesday, July 8, 2026	Y
-		Glossy Ibis	N	Wednesday, July 8, 2026	Y
-Sandwich Marina	41.7736623, -70.4996526	Killdeer	N	Wednesday, July 8, 2026	Y
-		Least Sandpiper	N	Wednesday, July 8, 2026	Y
-		American Herring Gull	N	Wednesday, July 8, 2026	Y
-		Least Tern	N	Wednesday, July 8, 2026	N
-		Common Tern	N	Wednesday, July 8, 2026	Y
-		Double-crested Cormorant	N	Wednesday, July 8, 2026	Y
-Brewster Wing Island	41.7574055, -70.1181364	Piping Plover	N	Wednesday, July 8, 2026	N
-		Willet	N	Wednesday, July 8, 2026	Y
-		Great Egret	N	Wednesday, July 8, 2026	Y
-		Turkey Vulture	N	Wednesday, July 8, 2026	Y
-		Osprey	N	Wednesday, July 8, 2026	Y
-		Hairy Woodpecker	N	Wednesday, July 8, 2026	Y
-Skaket Beach, Orleans	41.7958561, -70.0159979	Willet	N	Wednesday, July 8, 2026	Y
-		Laughing Gull	N	Wednesday, July 8, 2026	Y
-		Ring-billed Gull	N	Wednesday, July 8, 2026	Y
-		American Herring Gull	N	Wednesday, July 8, 2026	Y
-		Great Black-backed Gull	N	Wednesday, July 8, 2026	Y
-		Forster's Tern	N	Wednesday, July 8, 2026	Y
-		Northern Flicker	N	Wednesday, July 8, 2026	Y
-Cotchpincut Rd. Landing	41.7078238, -69.9537076	Greater Yellowlegs	N	Wednesday, July 8, 2026	Y
-		Snowy Egret	N	Wednesday, July 8, 2026	Y
-		Green Heron	N	Wednesday, July 8, 2026	Y
-Crowes Pasture	41.7566589, -70.1302707	Semipalmated Sandpiper	N	Wednesday, July 8, 2026	N
-Fort Hill, Eastham	41.818792, -69.9644995	Semipalmated Sandpiper	N	Wednesday, July 8, 2026	N
-		Willow Flycatcher	N	Wednesday, July 8, 2026	N
-Hemenway Landing	41.8230296, -69.9652719	Bonaparte's Gull	N	Wednesday, July 8, 2026	N
-Woods Hole--Quissett Campus	41.5337912, -70.6484349	American Herring Gull	N	Wednesday, July 8, 2026	Y
-		Common Tern	N	Wednesday, July 8, 2026	Y
-21 BP Mud Pond Walkabout	41.725565, -70.0259799	Glossy Ibis	N	Wednesday, July 8, 2026	Y
-		Little Blue Heron	Y	Thursday, July 9, 2026	Y
-Follins Pond, Observations FP Rd Landing Yarmouth Port	41.7100096, -70.1863074	Black-crowned Night Heron	N	Wednesday, July 8, 2026	Y
-298–300 US-6, Truro	42.012752, -70.070103	Turkey Vulture	N	Wednesday, July 8, 2026	Y
-4477 Falmouth Rd, Barnstable	41.640256, -70.444268	Turkey Vulture	N	Wednesday, July 8, 2026	Y
-		Red-shouldered Hawk	N	Wednesday, July 8, 2026	Y
-Osterville Home at 109 Marquand Dr, Barnstable	41.649966, -70.407592	Swallow-tailed Kite	Y	Thursday, July 9, 2026	Y
-2490 US-6, Wellfleet	41.931384, -70.01831	Cooper's Hawk	N	Wednesday, July 8, 2026	Y
-77 Barley Neck Rd - (Private)	41.778402, -69.9608892	Cooper's Hawk	N	Wednesday, July 8, 2026	Y
-		Red-shouldered Hawk	N	Wednesday, July 8, 2026	Y
-Lovells Pond	41.6489012, -70.4450026	Cooper's Hawk	N	Wednesday, July 8, 2026	Y
-Willowbend Country Club, Mashpee	41.6210568, -70.4599571	Bald Eagle	N	Wednesday, July 8, 2026	Y
-		Red-tailed Hawk	N	Wednesday, July 8, 2026	Y
-66 Sachemas Way, Chatham	41.702068, -70.000799	Broad-winged Hawk	N	Wednesday, July 8, 2026	N
-Shank Painter Pond Wildlife Sanctuary	42.0486749, -70.2027065	Broad-winged Hawk	N	Wednesday, July 8, 2026	N
-Ashumet Holly Wildlife Sanctuary	41.62315, -70.53616	Red-shouldered Hawk	N	Wednesday, July 8, 2026	Y
-Woodland Bog, West Barnstable	41.6920007, -70.3693296	Red-tailed Hawk	N	Wednesday, July 8, 2026	Y
-		Eastern Wood-Pewee	N	Wednesday, July 8, 2026	Y
-Woods Hole--Thickets	41.5332863, -70.6460166	Hairy Woodpecker	N	Wednesday, July 8, 2026	Y
-Beebe Woods, Falmouth	41.5639703, -70.6316582	Barred Owl	N	Wednesday, July 8, 2026	Y
-21 Bay Pine, Barnstable	41.7250465, -70.0167166	Downy Woodpecker	N	Wednesday, July 8, 2026	Y
-Great Pond, Barnstable	41.835535, -69.993904	Red-bellied Woodpecker	N	Wednesday, July 8, 2026	Y
-13 Oyster Pond Road, Harwich	41.7041082, -70.0473063	Common Tern	N	Wednesday, July 8, 2026	Y
-Ridgevale RD, South Chatham	41.6745337, -70.004765	Glossy Ibis	N	Wednesday, July 8, 2026	Y
-Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, July 9, 2026	Y`;
+        const INITIAL_RAW_DATA = `Location Name	Coordinates	Bird	Rare (Y/N)	Last Reported
+Barnstable Clean Water Coalition Cranberry Bogs	41.6714674, -70.4275267	Canada Goose	N	Thursday, July 9, 2026
+		Mute Swan	N	Thursday, July 9, 2026
+		Mallard	N	Thursday, July 9, 2026
+		Mourning Dove	N	Thursday, July 9, 2026
+		Great Egret	N	Thursday, July 9, 2026
+		Great Blue Heron	N	Thursday, July 9, 2026
+		Red-bellied Woodpecker	N	Thursday, July 9, 2026
+		Red-tailed Hawk	N	Thursday, July 9, 2026
+Santuit Pond Preserve	41.6508633, -70.4546785	Canada Goose	N	Wednesday, July 8, 2026
+Water Street Marsh, Yarmouth	41.7107104, -70.2602398	Canada Goose	N	Thursday, July 9, 2026
+		Chimney Swift	N	Thursday, July 9, 2026
+		Belted Kingfisher	N	Thursday, July 9, 2026
+Woods Hole--Great Harbor	41.5230215, -70.6763148	Canada Goose	N	Wednesday, July 8, 2026
+		Mallard	N	Wednesday, July 8, 2026
+		Surf Scoter	N	Wednesday, July 8, 2026
+Cape Cod Canal Bike Paths, Buzzards Bay	41.74326, -70.612899	Mute Swan	N	Wednesday, July 8, 2026
+		Rock Pigeon	N	Wednesday, July 8, 2026
+		Roseate Tern	N	Wednesday, July 8, 2026
+Cold Brook Preserve	41.6766572, -70.0687389	Mute Swan	N	Thursday, July 9, 2026
+		American Herring Gull	N	Thursday, July 9, 2026
+		Black-crowned Night Heron	N	Thursday, July 9, 2026
+		Snowy Egret	N	Thursday, July 9, 2026
+		Great Blue Heron	N	Thursday, July 9, 2026
+		Osprey	N	Thursday, July 9, 2026
+		Northern Harrier	N	Thursday, July 9, 2026
+		Eastern Phoebe	N	Thursday, July 9, 2026
+Pogorelc Sanctuary	41.699604, -70.355493	Wood Duck	N	Wednesday, July 8, 2026
+		Mallard	N	Wednesday, July 8, 2026
+		Yellow-crowned Night Heron	Y	Thursday, July 9, 2026
+		Black-crowned Night Heron	N	Wednesday, July 8, 2026
+Woodneck Beach and Marsh	41.5750275, -70.6413388	Mallard	N	Wednesday, July 8, 2026
+Bell's Neck Conservation Area	41.6840342, -70.1129007	American Black Duck	N	Thursday, July 9, 2026
+		Killdeer	N	Thursday, July 9, 2026
+		Least Sandpiper	N	Thursday, July 9, 2026
+		Laughing Gull	N	Thursday, July 9, 2026
+		Black-crowned Night Heron	N	Thursday, July 9, 2026
+		Snowy Egret	N	Thursday, July 9, 2026
+		Great Egret	N	Thursday, July 9, 2026
+		Osprey	N	Thursday, July 9, 2026
+		Red-bellied Woodpecker	N	Thursday, July 9, 2026
+		Downy Woodpecker	N	Thursday, July 9, 2026
+		Northern Flicker	N	Thursday, July 9, 2026
+		Eastern Wood-Pewee	N	Thursday, July 9, 2026
+High Head, Pilgrim Heights	42.0563031, -70.1161194	American Black Duck	N	Wednesday, July 8, 2026
+		Red-breasted Merganser	N	Wednesday, July 8, 2026
+		Spotted Sandpiper	N	Wednesday, July 8, 2026
+		Common Loon	N	Wednesday, July 8, 2026
+Old Wharf Rd. Marshes Chatham	41.7011872, -69.9513489	American Black Duck	N	Thursday, July 9, 2026
+		Killdeer	N	Thursday, July 9, 2026
+		Green Heron	N	Thursday, July 9, 2026
+Wellfleet Bay Wildlife Sanctuary	41.8825315, -69.995712	American Black Duck	N	Thursday, July 9, 2026
+		Killdeer	N	Thursday, July 9, 2026
+		Semipalmated Plover	N	Thursday, July 9, 2026
+		Piping Plover	N	Thursday, July 9, 2026
+		Short-billed Dowitcher	N	Thursday, July 9, 2026
+		Semipalmated Sandpiper	N	Thursday, July 9, 2026
+		Yellow-crowned Night Heron	Y	Thursday, July 9, 2026
+		Little Blue Heron	Y	Thursday, July 9, 2026
+		Hairy Woodpecker	N	Thursday, July 9, 2026
+Wellfleet Town Pier	41.93002, -70.0276762	American Black Duck	N	Thursday, July 9, 2026
+		Rock Pigeon	N	Thursday, July 9, 2026
+		Laughing Gull	N	Thursday, July 9, 2026
+		Ring-billed Gull	N	Thursday, July 9, 2026
+		Double-crested Cormorant	N	Thursday, July 9, 2026
+		Osprey	N	Thursday, July 9, 2026
+		Great Blue Heron	N	Thursday, July 9, 2026
+First Encounter Beach	41.8215025, -70.0037241	Common Eider	N	Thursday, July 9, 2026
+		Black Scoter	N	Thursday, July 9, 2026
+		American Oystercatcher	N	Thursday, July 9, 2026
+		Semipalmated Plover	N	Thursday, July 9, 2026
+		Piping Plover	N	Thursday, July 9, 2026
+		Hudsonian Whimbrel	N	Thursday, July 9, 2026
+		Short-billed Dowitcher	N	Thursday, July 9, 2026
+		Spotted Sandpiper	N	Thursday, July 9, 2026
+		Lesser Yellowlegs	N	Thursday, July 9, 2026
+		Least Sandpiper	N	Thursday, July 9, 2026
+		Bonaparte's Gull	N	Thursday, July 9, 2026
+		Ring-billed Gull	N	Thursday, July 9, 2026
+		Great Black-backed Gull	N	Thursday, July 9, 2026
+		Bridled Tern	Y	Thursday, July 9, 2026
+		Forster's Tern	N	Thursday, July 9, 2026
+		Red-throated Loon	N	Thursday, July 9, 2026
+		Common Loon	N	Thursday, July 9, 2026
+		Wilson's Storm-Petrel	N	Thursday, July 9, 2026
+		Cory's Shearwater	N	Thursday, July 9, 2026
+		Great Shearwater	N	Thursday, July 9, 2026
+		Sooty Shearwater	N	Thursday, July 9, 2026
+		Manx Shearwater	N	Thursday, July 9, 2026
+		Northern Gannet	N	Thursday, July 9, 2026
+		Great Blue Heron	N	Thursday, July 9, 2026
+		Long-tailed Jaeger	Y	Thursday, July 9, 2026
+		South Polar Skua	Y	Thursday, July 9, 2026
+Race Point	42.0691855, -70.2381706	Common Eider	N	Thursday, July 9, 2026
+		White-winged Scoter	N	Thursday, July 9, 2026
+		Red-breasted Merganser	N	Thursday, July 9, 2026
+		Piping Plover	N	Thursday, July 9, 2026
+		Bonaparte's Gull	N	Thursday, July 9, 2026
+		Ring-billed Gull	N	Thursday, July 9, 2026
+		Great Black-backed Gull	N	Thursday, July 9, 2026
+		Lesser Black-backed Gull	N	Thursday, July 9, 2026
+		Iceland Gull	N	Thursday, July 9, 2026
+		Black Tern	N	Thursday, July 9, 2026
+		Arctic Tern	N	Thursday, July 9, 2026
+		Roseate Tern	N	Thursday, July 9, 2026
+		Common Loon	N	Thursday, July 9, 2026
+		Wilson's Storm-Petrel	N	Thursday, July 9, 2026
+		Cory's Shearwater	N	Thursday, July 9, 2026
+		Great Shearwater	N	Thursday, July 9, 2026
+		Sooty Shearwater	N	Thursday, July 9, 2026
+		Manx Shearwater	N	Thursday, July 9, 2026
+		South Polar Skua	Y	Thursday, July 9, 2026
+Head of the Meadow Beach, N. Truro	42.0522244, -70.0795126	Black Scoter	N	Wednesday, July 8, 2026
+		Sooty Shearwater	N	Wednesday, July 8, 2026
+563 Main St, Harwich	41.686806, -70.088225	Wild Turkey	N	Wednesday, July 8, 2026
+95 Race Point Road, Provincetown	42.0623745, -70.1914677	Wild Turkey	N	Wednesday, July 8, 2026
+PCT Old Colony Trail 3–99 Rear Howland, Provincetown	42.061626, -70.178976	Wild Turkey	N	Wednesday, July 8, 2026
+		Black-billed Cuckoo	N	Wednesday, July 8, 2026
+		Hairy Woodpecker	N	Wednesday, July 8, 2026
+		Broad-winged Hawk	N	Wednesday, July 8, 2026
+Provincetown Harbor	42.0476822, -70.1639271	Rock Pigeon	N	Wednesday, July 8, 2026
+West Dennis Beach	41.65, -70.189	Rock Pigeon	N	Wednesday, July 8, 2026
+		Killdeer	N	Wednesday, July 8, 2026
+17 Lakeside Terrace, Harwich	41.7018115, -70.046262	Mourning Dove	N	Wednesday, July 8, 2026
+		Green Heron	N	Wednesday, July 8, 2026
+		Northern Flicker	N	Wednesday, July 8, 2026
+70 Church Road, Eastham	41.8605272, -69.9916186	Mourning Dove	N	Wednesday, July 8, 2026
+800–842 Iyannough Rd, Barnstable	41.670433, -70.299134	Mourning Dove	N	Wednesday, July 8, 2026
+		Great Blue Heron	N	Wednesday, July 8, 2026
+Buck's Creek	41.673952, -70.0011545	Mourning Dove	N	Wednesday, July 8, 2026
+		American Oystercatcher	N	Wednesday, July 8, 2026
+		Killdeer	N	Wednesday, July 8, 2026
+		Spotted Sandpiper	N	Wednesday, July 8, 2026
+		Willet (Eastern)	N	Wednesday, July 8, 2026
+		Greater Yellowlegs	N	Wednesday, July 8, 2026
+		Laughing Gull	N	Wednesday, July 8, 2026
+		American Herring Gull	N	Wednesday, July 8, 2026
+		Great Black-backed Gull	N	Wednesday, July 8, 2026
+		Least Tern	N	Wednesday, July 8, 2026
+		Common Tern	N	Wednesday, July 8, 2026
+		Double-crested Cormorant	N	Wednesday, July 8, 2026
+		Glossy Ibis	N	Wednesday, July 8, 2026
+		Snowy Egret	N	Wednesday, July 8, 2026
+		Great Egret	N	Wednesday, July 8, 2026
+Camp Edwards: KD Range Area	41.6982516, -70.5351875	Eastern Whip-poor-will	N	Wednesday, July 8, 2026
+2–6 S Orleans Rd, Orleans	41.791161, -69.987078	Chimney Swift	N	Wednesday, July 8, 2026
+Cape Cod Canal--Herring Run	41.7736001, -70.560143	Chimney Swift	N	Wednesday, July 8, 2026
+		Black Tern	N	Wednesday, July 8, 2026
+		Forster's Tern	N	Wednesday, July 8, 2026
+		Roseate Tern	N	Wednesday, July 8, 2026
+		Turkey Vulture	N	Wednesday, July 8, 2026
+		Broad-winged Hawk	N	Wednesday, July 8, 2026
+		Red-shouldered Hawk	N	Wednesday, July 8, 2026
+Mayflower St, Provincetown	42.052353, -70.191056	Chimney Swift	N	Wednesday, July 8, 2026
+		Turkey Vulture	N	Wednesday, July 8, 2026
+Stony Beach, Woods Hole	41.528885, -70.6740189	Chimney Swift	N	Wednesday, July 8, 2026
+33 Beach Plum Circle, Harwich	41.7039059, -70.0442548	Ruby-throated Hummingbird	N	Wednesday, July 8, 2026
+D&F Clapp's House, Brewster	41.737297, -70.088562	Ruby-throated Hummingbird	N	Wednesday, July 8, 2026
+		Red-bellied Woodpecker	N	Wednesday, July 8, 2026
+		Downy Woodpecker	N	Wednesday, July 8, 2026
+Thompson's Field--North of Cape Cod Rail Trail	41.6906041, -70.053463	Ruby-throated Hummingbird	N	Wednesday, July 8, 2026
+		Northern Flicker	N	Wednesday, July 8, 2026
+		Red-tailed Hawk	N	Wednesday, July 8, 2026
+Wequassett Resort And Golf Club, Harwich	41.721876, -69.997136	Ruby-throated Hummingbird	N	Wednesday, July 8, 2026
+		Spotted Sandpiper	N	Wednesday, July 8, 2026
+		Double-crested Cormorant	N	Wednesday, July 8, 2026
+Forest Beach and Conservation Lands, Chatham	41.6700588, -70.0253749	American Oystercatcher	N	Wednesday, July 8, 2026
+		Piping Plover	N	Wednesday, July 8, 2026
+		Hudsonian Whimbrel	N	Wednesday, July 8, 2026
+		Greater Yellowlegs	N	Wednesday, July 8, 2026
+		Least Tern	N	Wednesday, July 8, 2026
+		Green Heron	N	Wednesday, July 8, 2026
+		Glossy Ibis	N	Wednesday, July 8, 2026
+Sandwich Marina	41.7736623, -70.4996526	Killdeer	N	Wednesday, July 8, 2026
+		Least Sandpiper	N	Wednesday, July 8, 2026
+		American Herring Gull	N	Wednesday, July 8, 2026
+		Least Tern	N	Wednesday, July 8, 2026
+		Common Tern	N	Wednesday, July 8, 2026
+		Double-crested Cormorant	N	Wednesday, July 8, 2026
+Brewster Wing Island	41.7574055, -70.1181364	Piping Plover	N	Wednesday, July 8, 2026
+		Willet	N	Wednesday, July 8, 2026
+		Great Egret	N	Wednesday, July 8, 2026
+		Turkey Vulture	N	Wednesday, July 8, 2026
+		Osprey	N	Wednesday, July 8, 2026
+		Hairy Woodpecker	N	Wednesday, July 8, 2026
+Skaket Beach, Orleans	41.7958561, -70.0159979	Willet	N	Wednesday, July 8, 2026
+		Laughing Gull	N	Wednesday, July 8, 2026
+		Ring-billed Gull	N	Wednesday, July 8, 2026
+		American Herring Gull	N	Wednesday, July 8, 2026
+		Great Black-backed Gull	N	Wednesday, July 8, 2026
+		Forster's Tern	N	Wednesday, July 8, 2026
+		Northern Flicker	N	Wednesday, July 8, 2026
+Cotchpincut Rd. Landing	41.7078238, -69.9537076	Greater Yellowlegs	N	Wednesday, July 8, 2026
+		Snowy Egret	N	Wednesday, July 8, 2026
+		Green Heron	N	Wednesday, July 8, 2026
+Crowes Pasture	41.7566589, -70.1302707	Semipalmated Sandpiper	N	Wednesday, July 8, 2026
+Fort Hill, Eastham	41.818792, -69.9644995	Semipalmated Sandpiper	N	Wednesday, July 8, 2026
+		Willow Flycatcher	N	Wednesday, July 8, 2026
+Hemenway Landing	41.8230296, -69.9652719	Bonaparte's Gull	N	Wednesday, July 8, 2026
+Woods Hole--Quissett Campus	41.5337912, -70.6484349	American Herring Gull	N	Wednesday, July 8, 2026
+		Common Tern	N	Wednesday, July 8, 2026
+21 BP Mud Pond Walkabout	41.725565, -70.0259799	Glossy Ibis	N	Wednesday, July 8, 2026
+		Little Blue Heron	Y	Thursday, July 9, 2026
+Follins Pond, Observations FP Rd Landing Yarmouth Port	41.7100096, -70.1863074	Black-crowned Night Heron	N	Wednesday, July 8, 2026
+298–300 US-6, Truro	42.012752, -70.070103	Turkey Vulture	N	Wednesday, July 8, 2026
+4477 Falmouth Rd, Barnstable	41.640256, -70.444268	Turkey Vulture	N	Wednesday, July 8, 2026
+		Red-shouldered Hawk	N	Wednesday, July 8, 2026
+Osterville Home at 109 Marquand Dr, Barnstable	41.649966, -70.407592	Swallow-tailed Kite	Y	Thursday, July 9, 2026
+2490 US-6, Wellfleet	41.931384, -70.01831	Cooper's Hawk	N	Wednesday, July 8, 2026
+77 Barley Neck Rd - (Private)	41.778402, -69.9608892	Cooper's Hawk	N	Wednesday, July 8, 2026
+		Red-shouldered Hawk	N	Wednesday, July 8, 2026
+Lovells Pond	41.6489012, -70.4450026	Cooper's Hawk	N	Wednesday, July 8, 2026
+Willowbend Country Club, Mashpee	41.6210568, -70.4599571	Bald Eagle	N	Wednesday, July 8, 2026
+		Red-tailed Hawk	N	Wednesday, July 8, 2026
+66 Sachemas Way, Chatham	41.702068, -70.000799	Broad-winged Hawk	N	Wednesday, July 8, 2026
+Shank Painter Pond Wildlife Sanctuary	42.0486749, -70.2027065	Broad-winged Hawk	N	Wednesday, July 8, 2026
+Ashumet Holly Wildlife Sanctuary	41.62315, -70.53616	Red-shouldered Hawk	N	Wednesday, July 8, 2026
+Woodland Bog, West Barnstable	41.6920007, -70.3693296	Red-tailed Hawk	N	Wednesday, July 8, 2026
+		Eastern Wood-Pewee	N	Wednesday, July 8, 2026
+Woods Hole--Thickets	41.5332863, -70.6460166	Hairy Woodpecker	N	Wednesday, July 8, 2026
+Beebe Woods, Falmouth	41.5639703, -70.6316582	Barred Owl	N	Wednesday, July 8, 2026
+21 Bay Pine, Barnstable	41.7250465, -70.0167166	Downy Woodpecker	N	Wednesday, July 8, 2026
+Great Pond, Barnstable	41.835535, -69.993904	Red-bellied Woodpecker	N	Wednesday, July 8, 2026
+13 Oyster Pond Road, Harwich	41.7041082, -70.0473063	Common Tern	N	Wednesday, July 8, 2026
+Ridgevale RD, South Chatham	41.6745337, -70.004765	Glossy Ibis	N	Wednesday, July 8, 2026
+Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, July 9, 2026`;
+
+        // Default eBird World Life List (Common Names) — used to auto-derive "Seen" status.
+        // Replace by uploading a fresh life list export from eBird (My eBird > Download My Data).
+        const DEFAULT_LIFE_LIST = [
+            "American Bittern", "American Coot", "American Crow", "American Goldfinch",
+            "American Herring Gull", "American Kestrel", "American Pipit", "American Redstart",
+            "American Robin", "American Wigeon", "Anhinga", "Atlantic Puffin", "Bald Eagle",
+            "Baltimore Oriole", "Barn Swallow", "Barred Owl", "Belted Kingfisher", "Black Guillemot",
+            "Black Scoter", "Black Skimmer", "Black Vulture", "Black-bellied Plover",
+            "Black-bellied Whistling-Duck", "Black-capped Chickadee", "Black-crowned Night Heron",
+            "Black-headed Gull", "Blue Grosbeak", "Blue Jay", "Blue-gray Gnatcatcher", "Blue-headed Vireo",
+            "Blue-winged Teal", "Boat-tailed Grackle", "Brown Pelican", "Brown Thrasher",
+            "Brown-headed Cowbird", "Brown-headed Nuthatch", "Bufflehead", "Canada Goose",
+            "Carolina Chickadee", "Carolina Wren", "Cedar Waxwing", "Chimney Swift", "Chipping Sparrow",
+            "Clapper Rail", "Common Chaffinch", "Common Chiffchaff", "Common Gallinule", "Common Grackle",
+            "Common Raven", "Common Wood-Pigeon", "Common Yellowthroat", "Dark-eyed Junco",
+            "Double-crested Cormorant", "Downy Woodpecker", "Eastern Bluebird", "Eastern Kingbird",
+            "Eastern Meadowlark", "Eastern Phoebe", "Eastern Towhee", "Eastern Warbling Vireo",
+            "Eastern Wood-Pewee", "Eurasian Blackbird", "Eurasian Blackcap", "Eurasian Collared-Dove",
+            "Eurasian Jackdaw", "Eurasian Magpie", "Eurasian Skylark", "Eurasian Tree Sparrow",
+            "Eurasian Treecreeper", "Eurasian Wren", "European Goldfinch", "European Herring Gull",
+            "European Robin", "European Starling", "Fish Crow", "Forster's Tern", "Glossy Ibis",
+            "Golden-crowned Kinglet", "Gray Catbird", "Gray Wagtail", "Great Black-backed Gull",
+            "Great Blue Heron", "Great Crested Flycatcher", "Great Egret", "Great Horned Owl", "Great Tit",
+            "Great-tailed Grackle", "Greater Yellowlegs", "Green Heron", "Hairy Woodpecker", "Hermit Thrush",
+            "Hooded Crow", "Hooded Merganser", "House Finch", "House Sparrow", "Indigo Bunting",
+            "Italian Sparrow", "Killdeer", "Laughing Gull", "Least Sandpiper", "Lesser Black-backed Gull",
+            "Lesser Scaup", "Lesser Yellowlegs", "Limpkin", "Little Blue Heron", "Loggerhead Shrike",
+            "Long-tailed Tit", "Mallard", "Marbled Godwit", "Marsh Wren", "Mississippi Kite",
+            "Mourning Dove", "Muscovy Duck", "Mute Swan", "Northern Cardinal", "Northern Flicker",
+            "Northern Harrier", "Northern House Wren", "Northern Mockingbird", "Northern Parula",
+            "Northern Rough-winged Swallow", "Northern Shoveler", "Northern Waterthrush", "Osprey",
+            "Painted Bunting", "Palm Warbler", "Peregrine Falcon", "Pied-billed Grebe",
+            "Pileated Woodpecker", "Pine Warbler", "Purple Gallinule", "Purple Martin", "Red Knot",
+            "Red-bellied Woodpecker", "Red-billed Chough", "Red-breasted Nuthatch", "Red-eyed Vireo",
+            "Red-headed Woodpecker", "Red-shouldered Hawk", "Red-tailed Hawk", "Red-winged Blackbird",
+            "Ring-billed Gull", "Ring-necked Duck", "Ring-necked Pheasant", "Rock Pigeon", "Rook",
+            "Rose-ringed Parakeet", "Roseate Spoonbill", "Royal Tern", "Ruby-crowned Kinglet",
+            "Ruby-throated Hummingbird", "Ruddy Duck", "Ruddy Turnstone", "Rusty Blackbird", "Sanderling",
+            "Sandwich Tern", "Sardinian Warbler", "Savannah Sparrow", "Short-toed Treecreeper", "Snow Goose",
+            "Snowy Egret", "Song Sparrow", "Song Thrush", "Sora", "Spanish Sparrow", "Spotted Sandpiper",
+            "Summer Tanager", "Swallow-tailed Kite", "Swamp Sparrow", "Tree Swallow", "Tricolored Heron",
+            "Tufted Titmouse", "Tundra Swan", "Turkey Vulture", "Vesper Sparrow", "Virginia Rail",
+            "Western Cattle-Egret", "Western House-Martin", "White Ibis", "White Wagtail",
+            "White-breasted Nuthatch", "White-eyed Vireo", "White-throated Sparrow", "White-winged Dove",
+            "Wild Turkey", "Willet", "Willow Warbler", "Wilson's Snipe", "Winter Wren", "Wood Duck",
+            "Wood Stork", "Wood Thrush", "Worm-eating Warbler", "Yellow-bellied Sapsucker",
+            "Yellow-crowned Night Heron", "Yellow-legged Gull", "Yellow-rumped Warbler",
+            "Yellow-throated Warbler"
+        ];
 
         // Direct common name to exact eBird species code conversion map (fixed with user corrections)
         const EBIRD_CODE_MAP = {
@@ -374,10 +427,59 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             return `https://ebird.org/search?q=${encodeURIComponent(cleanName)}`;
         }
 
+        // Safe localStorage helpers (no-ops if storage is unavailable, e.g. private browsing)
+            const storageGet = (key, fallback) => {
+                try {
+                    const raw = window.localStorage.getItem(key);
+                    return raw !== null ? JSON.parse(raw) : fallback;
+                } catch (e) { return fallback; }
+            };
+            const storageSet = (key, value) => {
+                try { window.localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* ignore */ }
+            };
+
         function App() {
-            const [rawData, setRawData] = useState(INITIAL_RAW_DATA);
+            const [rawData, setRawData] = useState(() => storageGet('cbc_rawData', INITIAL_RAW_DATA));
             const [pastedData, setPastedData] = useState('');
             const [showSyncPanel, setShowSyncPanel] = useState(false);
+            const [showImportPanel, setShowImportPanel] = useState(false);
+
+            // eBird life list (Common Names) used to auto-derive Seen status, plus manual
+            // per-bird overrides that persist even when the TSV/report data is re-imported.
+            const [lifeList, setLifeList] = useState(() => storageGet('cbc_lifeList', DEFAULT_LIFE_LIST));
+            const [seenOverrides, setSeenOverrides] = useState(() => storageGet('cbc_seenOverrides', {}));
+            const lifeListFileRef = useRef(null);
+            const reportFileRef = useRef(null);
+
+            useEffect(() => { storageSet('cbc_rawData', rawData); }, [rawData]);
+            useEffect(() => { storageSet('cbc_lifeList', lifeList); }, [lifeList]);
+            useEffect(() => { storageSet('cbc_seenOverrides', seenOverrides); }, [seenOverrides]);
+
+            const lifeListSet = useMemo(() => new Set(lifeList.map(normalizeBirdName)), [lifeList]);
+
+            // Effective seen status for a record: a manual override (if any) wins, otherwise
+            // it's derived from whether the bird is on the life list.
+            const getSeen = (record) => {
+                const overrideKey = `${record.locationName}|${record.bird}`.toLowerCase();
+                if (Object.prototype.hasOwnProperty.call(seenOverrides, overrideKey)) {
+                    return seenOverrides[overrideKey];
+                }
+                return lifeListSet.has(normalizeBirdName(record.bird)) ? 'Y' : 'N';
+            };
+
+            const setSeenOverride = (record, value) => {
+                const overrideKey = `${record.locationName}|${record.bird}`.toLowerCase();
+                setSeenOverrides(prev => ({ ...prev, [overrideKey]: value }));
+            };
+
+            const clearSeenOverride = (record) => {
+                const overrideKey = `${record.locationName}|${record.bird}`.toLowerCase();
+                setSeenOverrides(prev => {
+                    const next = { ...prev };
+                    delete next[overrideKey];
+                    return next;
+                });
+            };
             
             const [searchQuery, setSearchQuery] = useState('');
             const [statusFilter, setStatusFilter] = useState('ALL'); 
@@ -399,7 +501,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
 
             const [isAddOpen, setIsAddOpen] = useState(false);
             const [newBird, setNewBird] = useState({
-                locationName: '', coordinates: '', bird: '', rare: 'N', lastReported: 'Thursday, July 9, 2026', seen: 'N'
+                locationName: '', coordinates: '', bird: '', rare: 'N', lastReported: 'Thursday, July 9, 2026'
             });
 
             // Capture install criteria
@@ -434,19 +536,28 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 }
             }, [rawData]);
 
+            // birdRecords enriched with a computed `seen` field (life list match, or manual override)
+            const enrichedRecords = useMemo(() => {
+                return birdRecords.map(r => {
+                    const overrideKey = `${r.locationName}|${r.bird}`.toLowerCase();
+                    const isOverridden = Object.prototype.hasOwnProperty.call(seenOverrides, overrideKey);
+                    return { ...r, seen: getSeen(r), isOverridden };
+                });
+            }, [birdRecords, lifeListSet, seenOverrides]);
+
             const stats = useMemo(() => {
-                const total = birdRecords.length;
-                const seenCount = birdRecords.filter(r => r.seen === 'Y').length;
-                const rareCount = birdRecords.filter(r => r.rare === 'Y').length;
-                const priorityCount = birdRecords.filter(r => r.rare === 'Y' && r.seen === 'N').length;
-                const uniqueSpots = new Set(birdRecords.map(r => r.locationName)).size;
+                const total = enrichedRecords.length;
+                const seenCount = enrichedRecords.filter(r => r.seen === 'Y').length;
+                const rareCount = enrichedRecords.filter(r => r.rare === 'Y').length;
+                const priorityCount = enrichedRecords.filter(r => r.rare === 'Y' && r.seen === 'N').length;
+                const uniqueSpots = new Set(enrichedRecords.map(r => r.locationName)).size;
 
                 return {
                     total, seenCount, unseenCount: total - seenCount,
                     seenPercentage: total > 0 ? Math.round((seenCount / total) * 100) : 0,
                     rareCount, priorityCount, uniqueSpots
                 };
-            }, [birdRecords]);
+            }, [enrichedRecords]);
 
             const updateRecord = (id, field, value) => {
                 const updated = birdRecords.map(rec => {
@@ -457,8 +568,17 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 showToast("Checklist synced.");
             };
 
-            const toggleSeen = (id, currentSeen) => {
-                updateRecord(id, 'seen', currentSeen === 'Y' ? 'N' : 'Y');
+            // Seen is no longer part of the TSV — toggling sets/clears a manual override that
+            // persists independently, so it survives future TSV/report re-imports.
+            const toggleSeen = (record) => {
+                const current = getSeen(record);
+                setSeenOverride(record, current === 'Y' ? 'N' : 'Y');
+                showToast(current === 'Y' ? "Marked unseen (manual override)." : "Marked seen (manual override).");
+            };
+
+            const resetSeenToLifeList = (record) => {
+                clearSeenOverride(record);
+                showToast("Reverted to life-list status.");
             };
 
             const toggleRare = (id, currentRare) => {
@@ -472,7 +592,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             };
 
             const filteredRecords = useMemo(() => {
-                return birdRecords.filter(r => {
+                return enrichedRecords.filter(r => {
                     const matchesSearch = 
                         r.bird.toLowerCase().includes(searchQuery.toLowerCase()) ||
                         r.locationName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -495,7 +615,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     if (sortBy === 'status') return b.seen.localeCompare(a.seen);
                     return 0;
                 });
-            }, [birdRecords, searchQuery, statusFilter, selectedLocation, selectedBird, sortBy]);
+            }, [enrichedRecords, searchQuery, statusFilter, selectedLocation, selectedBird, sortBy]);
 
             const mapLocations = useMemo(() => {
                 const locMap = {};
@@ -516,7 +636,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     item.birds.push(r);
                 });
 
-                birdRecords.forEach(r => {
+                enrichedRecords.forEach(r => {
                     if (!locMap[r.locationName]) {
                         locMap[r.locationName] = {
                             name: r.locationName, coords: r.coordinates, total: 0, seen: 0, unseenRares: 0, isActive: false, birds: []
@@ -539,7 +659,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     if (!a.isActive && b.isActive) return 1;
                     return b.unseenRares - a.unseenRares || b.total - a.total;
                 });
-            }, [filteredRecords, birdRecords]);
+            }, [filteredRecords, enrichedRecords]);
 
             // Leaflet JS CDN Injector & Map Booting Pipeline
             useEffect(() => {
@@ -667,7 +787,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 const updated = [...birdRecords, { ...newBird, id: `custom-${Date.now()}` }];
                 setRawData(recordsToTSV(updated));
                 setIsAddOpen(false);
-                setNewBird({ locationName: '', coordinates: '', bird: '', rare: 'N', lastReported: 'Thursday, July 9, 2026', seen: 'N' });
+                setNewBird({ locationName: '', coordinates: '', bird: '', rare: 'N', lastReported: 'Thursday, July 9, 2026' });
                 showToast("Added target successfully!");
             };
 
@@ -693,6 +813,89 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             const showToast = (msg) => {
                 setToastMsg(msg);
                 setTimeout(() => setToastMsg(''), 3000);
+            };
+
+            // --- Import: eBird life list CSV -------------------------------------------------
+            const handleLifeListFile = async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = ''; // allow re-selecting the same file later
+                if (!file) return;
+                try {
+                    const text = await file.text();
+                    const names = parseLifeListCSV(text);
+                    if (names.length === 0) {
+                        showToast("Couldn't find a 'Common Name' column in that CSV.");
+                        return;
+                    }
+                    setLifeList(names);
+                    showToast(`Life list updated — ${names.length} species loaded.`);
+                } catch (err) {
+                    showToast("Failed to read that life list file.");
+                }
+            };
+
+            // --- Import: sighting report (.docx rare-alert export, or plain .txt/.tsv) -------
+            // Merges new/updated sightings into the existing dataset rather than replacing it,
+            // so hotspots and species not present in the uploaded report are kept, and manual
+            // seen overrides (keyed by location+bird) are untouched.
+            const mergeReportEntries = (entries) => {
+                if (entries.length === 0) {
+                    showToast("No recognizable sighting rows found in that file.");
+                    return;
+                }
+                const byKey = new Map(birdRecords.map(r => [`${r.locationName}|${r.bird}`.toLowerCase(), r]));
+                let added = 0, updated = 0;
+                entries.forEach(entry => {
+                    const key = `${entry.locationName}|${entry.bird}`.toLowerCase();
+                    const existing = byKey.get(key);
+                    if (existing) {
+                        const newer = new Date(entry.lastReported || 0) >= new Date(existing.lastReported || 0);
+                        byKey.set(key, {
+                            ...existing,
+                            coordinates: existing.coordinates || entry.coordinates,
+                            rare: existing.rare === 'Y' || entry.rare === 'Y' ? 'Y' : 'N',
+                            lastReported: newer ? entry.lastReported : existing.lastReported
+                        });
+                        updated++;
+                    } else {
+                        byKey.set(key, {
+                            id: `${entry.locationName}-${entry.bird}-${Date.now()}-${added}`,
+                            locationName: entry.locationName,
+                            coordinates: entry.coordinates,
+                            bird: entry.bird,
+                            rare: entry.rare,
+                            lastReported: entry.lastReported
+                        });
+                        added++;
+                    }
+                });
+                const merged = Array.from(byKey.values()).sort((a, b) => a.locationName.localeCompare(b.locationName));
+                setRawData(recordsToTSV(merged));
+                showToast(`Report merged — ${added} new, ${updated} updated. Seen status recalculated from your life list.`);
+            };
+
+            const handleReportFile = async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file) return;
+                try {
+                    let text;
+                    if (file.name.toLowerCase().endsWith('.docx')) {
+                        if (!window.mammoth) {
+                            showToast("Docx reader failed to load — check your connection and try again.");
+                            return;
+                        }
+                        const arrayBuffer = await file.arrayBuffer();
+                        const result = await window.mammoth.extractRawText({ arrayBuffer });
+                        text = result.value;
+                    } else {
+                        text = await file.text();
+                    }
+                    const entries = parseAlertReport(text);
+                    mergeReportEntries(entries);
+                } catch (err) {
+                    showToast("Failed to read that report file.");
+                }
             };
 
             return (
@@ -723,11 +926,40 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                 )}
                                 <button onClick={() => setIsAddOpen(true)} className="bg-teal-500 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs shadow-lg hover:bg-teal-400 transition">+ Sighting</button>
                                 <button onClick={() => { setPastedData(rawData); setShowSyncPanel(!showSyncPanel); }} className="bg-slate-800 text-slate-300 border border-slate-700 font-semibold px-4 py-2 rounded-xl text-xs hover:bg-slate-700 transition">Sync TSV</button>
+                                <button onClick={() => setShowImportPanel(!showImportPanel)} className="bg-slate-800 text-slate-300 border border-slate-700 font-semibold px-4 py-2 rounded-xl text-xs hover:bg-slate-700 transition">Import</button>
+                                <input ref={lifeListFileRef} type="file" accept=".csv" onChange={handleLifeListFile} className="hidden" />
+                                <input ref={reportFileRef} type="file" accept=".docx,.txt,.tsv" onChange={handleReportFile} className="hidden" />
                             </div>
                         </div>
                     </header>
 
                     <main className="max-w-7xl mx-auto px-4 py-6 md:px-8 flex-1 w-full space-y-6">
+                        {showImportPanel && (
+                            <div className="bg-slate-900 border border-teal-500/30 rounded-2xl p-5 space-y-4 shadow-xl">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="text-sm font-bold text-teal-400">Import Data</h3>
+                                    <button onClick={() => setShowImportPanel(false)} className="text-slate-400 text-xs px-2 hover:text-white">Close</button>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
+                                        <h4 className="text-xs font-bold text-slate-200">eBird Life List (.csv)</h4>
+                                        <p className="text-[10px] text-slate-400">Your "Seen" status is auto-derived by matching birds against this list. Currently loaded: <strong className="text-teal-400">{lifeList.length}</strong> species.</p>
+                                        <button onClick={() => lifeListFileRef.current?.click()} className="w-full bg-teal-500 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs hover:bg-teal-400 transition">Upload Life List CSV</button>
+                                    </div>
+                                    <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
+                                        <h4 className="text-xs font-bold text-slate-200">Sighting Report (.docx / .txt / .tsv)</h4>
+                                        <p className="text-[10px] text-slate-400">Upload an eBird rare-alert export (like your unseen report doc) to merge new sightings into your hotspot data without losing existing entries or manual overrides.</p>
+                                        <button onClick={() => reportFileRef.current?.click()} className="w-full bg-teal-500 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs hover:bg-teal-400 transition">Upload Report</button>
+                                    </div>
+                                </div>
+                                {Object.keys(seenOverrides).length > 0 && (
+                                    <div className="flex items-center justify-between bg-slate-950 border border-slate-800 rounded-xl p-3">
+                                        <span className="text-[10px] text-slate-400">{Object.keys(seenOverrides).length} manual seen override(s) active — these persist across imports.</span>
+                                        <button onClick={() => { setSeenOverrides({}); showToast("All manual overrides cleared."); }} className="text-[10px] text-rose-400 hover:underline font-bold">Clear all overrides</button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                         {showSyncPanel && (
                             <div className="bg-slate-900 border border-teal-500/30 rounded-2xl p-5 space-y-4 shadow-xl">
                                 <div className="flex justify-between items-center">
@@ -950,11 +1182,21 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                                         eBird ↗
                                                     </a>
                                                     <button 
-                                                        onClick={(e) => { e.stopPropagation(); toggleSeen(r.id, r.seen); }} 
+                                                        onClick={(e) => { e.stopPropagation(); toggleSeen(r); }} 
+                                                        title={r.isOverridden ? "Manually overridden — click to flip" : "Derived from your life list — click to override"}
                                                         className={`px-3 py-1 rounded border transition text-[10px] font-bold ${r.seen === 'Y' ? 'bg-teal-500/10 text-teal-400 border-teal-500/20' : 'bg-slate-900 text-slate-400 border-slate-800'}`}
                                                     >
-                                                        {r.seen === 'Y' ? '✓ Seen' : 'Mark Seen'}
+                                                        {r.seen === 'Y' ? '✓ Seen' : 'Mark Seen'}{r.isOverridden ? ' *' : ''}
                                                     </button>
+                                                    {r.isOverridden && (
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); resetSeenToLifeList(r); }}
+                                                            title="Revert to life-list-derived status"
+                                                            className="p-1.5 bg-slate-900 border border-slate-800 hover:text-teal-400 rounded-lg text-slate-500 transition text-[10px]"
+                                                        >
+                                                            ↺
+                                                        </button>
+                                                    )}
                                                     <button 
                                                         onClick={(e) => { e.stopPropagation(); deleteRecord(r.id); }} 
                                                         className="p-1.5 bg-slate-900 border border-slate-800 hover:text-red-400 rounded-lg text-slate-500 transition"
@@ -1055,6 +1297,10 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             );
         }
 
+        // Note: the TSV format no longer carries a "Seen" column. Seen/unseen status is
+        // derived at render time by comparing each bird against the uploaded eBird life list
+        // (see computeSeen / useLifeListSet below), with room for manual overrides that survive
+        // TSV re-imports (see seenOverrides state in App).
         function parseTSV(text) {
             const lines = text.trim().split('\n');
             const result = [];
@@ -1072,7 +1318,6 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 const bird = cols[2].trim();
                 const rare = cols[3]?.trim() || "N";
                 const date = cols[4]?.trim() || "";
-                const seen = cols[5]?.trim() || "N";
 
                 if (loc !== "") {
                     currentLoc = loc;
@@ -1085,15 +1330,14 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     coordinates: currentCoords,
                     bird: bird,
                     rare: rare,
-                    lastReported: date,
-                    seen: seen
+                    lastReported: date
                 });
             }
             return result;
         }
 
         function recordsToTSV(records) {
-            const header = "Location Name\tCoordinates\tBird\tRare (Y/N)\tLast Reported\tSeen (Y/N)";
+            const header = "Location Name\tCoordinates\tBird\tRare (Y/N)\tLast Reported";
             let lastLoc = "";
             let lastCoords = "";
             const rows = records.map(r => {
@@ -1105,9 +1349,83 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     lastLoc = r.locationName;
                     lastCoords = r.coordinates;
                 }
-                return `${locCol}\t${coordCol}\t${r.bird}\t${r.rare}\t${r.lastReported}\t${r.seen}`;
+                return `${locCol}\t${coordCol}\t${r.bird}\t${r.rare}\t${r.lastReported}`;
             });
             return [header, ...rows].join('\n');
+        }
+
+        // Strips parenthetical subspecies/form qualifiers and normalizes case for matching,
+        // e.g. "Willet (Eastern)" -> "willet", so life-list comparisons aren't thrown off by them.
+        function normalizeBirdName(name) {
+            return (name || "").replace(/\s*\([^)]*\)\s*/g, "").trim().toLowerCase();
+        }
+
+        // Parses an uploaded eBird life list CSV export and returns a sorted array of unique
+        // Common Names. Handles quoted fields (commas inside quotes) per standard CSV escaping.
+        function parseLifeListCSV(text) {
+            const rows = [];
+            let row = [], field = "", inQuotes = false;
+            for (let i = 0; i < text.length; i++) {
+                const c = text[i];
+                if (inQuotes) {
+                    if (c === '"') {
+                        if (text[i + 1] === '"') { field += '"'; i++; }
+                        else inQuotes = false;
+                    } else field += c;
+                } else {
+                    if (c === '"') inQuotes = true;
+                    else if (c === ',') { row.push(field); field = ""; }
+                    else if (c === '\n' || c === '\r') {
+                        if (c === '\r' && text[i + 1] === '\n') i++;
+                        row.push(field); field = "";
+                        rows.push(row); row = [];
+                    } else field += c;
+                }
+            }
+            if (field !== "" || row.length > 0) { row.push(field); rows.push(row); }
+            if (rows.length === 0) return [];
+
+            const header = rows[0].map(h => h.trim().toLowerCase());
+            const nameIdx = header.indexOf('common name');
+            if (nameIdx === -1) return [];
+
+            const names = new Set();
+            for (let i = 1; i < rows.length; i++) {
+                const val = rows[i][nameIdx]?.trim();
+                if (val) names.add(val);
+            }
+            return Array.from(names).sort();
+        }
+
+        // Parses a raw eBird "rare bird alert" style report (as exported to .docx, or plain
+        // text/TSV) with lines like: Bird Name<TAB>Location<TAB>(lat, lng)<TAB>YYYY-MM-DD HH:MM
+        // Returns sighting records compatible with the main record shape, deduped to the most
+        // recent report per location+bird. Every entry is treated as Rare, matching the source
+        // report's "unseen rare alerts" framing.
+        function parseAlertReport(text) {
+            const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            const byKey = new Map();
+            const lineRe = /^(.+?)\t(.+?)\t\(([-\d.]+),\s*([-\d.]+)\)\t(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)$/;
+
+            for (const line of lines) {
+                const m = line.match(lineRe);
+                if (!m) continue;
+                const [, bird, location, lat, lng, dateStr] = m;
+                const key = `${location.trim().toLowerCase()}|${bird.trim().toLowerCase()}`;
+                const dt = new Date(dateStr.replace(' ', 'T'));
+                const existing = byKey.get(key);
+                if (!existing || dt > existing.dt) {
+                    byKey.set(key, {
+                        locationName: location.trim(),
+                        coordinates: `${lat}, ${lng}`,
+                        bird: bird.trim(),
+                        rare: 'Y',
+                        dt,
+                        lastReported: isNaN(dt) ? dateStr : dt.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+                    });
+                }
+            }
+            return Array.from(byKey.values());
         }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
@@ -1115,6 +1433,3 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
     </script>
 </body>
 </html>
-```
-
-The updated web application code is fully ready for deployment. The Leaflet.js base layer lifecycle state transitions are fully synchronized, eBird links are corrected, and clicking bird rows now triggers the interactive global filter logic. Let me know if you'd like to adjust the visual alignment of the new coordinates capture button!
