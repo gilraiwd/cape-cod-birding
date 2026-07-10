@@ -542,6 +542,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             const mapContainerRef = useRef(null);
             const mapInstance = useRef(null);
             const markerLayerGroup = useRef(null);
+            const myLocationMarker = useRef(null);
 
             const [isAddOpen, setIsAddOpen] = useState(false);
             const [newBird, setNewBird] = useState({
@@ -804,6 +805,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                         }
                         mapInstance.current.remove();
                         mapInstance.current = null;
+                        myLocationMarker.current = null;
                         setMapReady(false);
                     }
                 };
@@ -937,6 +939,45 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 } else {
                     showToast("Sensor tracking not supported by this device.");
                 }
+            };
+
+            // "Find Me" — centers the map on the device's current location and drops/updates a
+            // pin for it, distinct from the hotspot markers (used for orientation, not sightings).
+            const [locating, setLocating] = useState(false);
+            const handleFindMe = () => {
+                if (!navigator.geolocation) {
+                    showToast("Geolocation not supported by this device.");
+                    return;
+                }
+                if (!mapInstance.current) return;
+                setLocating(true);
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const { latitude, longitude } = position.coords;
+                        setLocating(false);
+                        mapInstance.current.setView([latitude, longitude], 14);
+                        if (myLocationMarker.current) {
+                            myLocationMarker.current.setLatLng([latitude, longitude]);
+                        } else {
+                            myLocationMarker.current = L.marker([latitude, longitude], {
+                                icon: L.divIcon({
+                                    className: '',
+                                    html: `<div style="width:16px;height:16px;border-radius:9999px;background:#38bdf8;border:3px solid #ffffff;box-shadow:0 0 0 5px rgba(56,189,248,0.35);"></div>`,
+                                    iconSize: [16, 16],
+                                    iconAnchor: [8, 8]
+                                }),
+                                zIndexOffset: 1000
+                            }).addTo(mapInstance.current);
+                            myLocationMarker.current.bindPopup('📍 You are here');
+                        }
+                        showToast("Found your location.");
+                    },
+                    (error) => {
+                        setLocating(false);
+                        showToast("Couldn't get your location — check location permissions.");
+                    },
+                    { enableHighAccuracy: true, timeout: 10000 }
+                );
             };
 
             const showToast = (msg) => {
@@ -1507,6 +1548,16 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
                                 <div className="lg:col-span-8 bg-slate-950 border border-slate-800 rounded-2xl min-h-[400px] relative overflow-hidden z-10">
                                     <div ref={mapContainerRef} className="w-full h-full min-h-[400px]" />
+                                    {mapReady && (
+                                        <button
+                                            onClick={handleFindMe}
+                                            disabled={locating}
+                                            title="Center the map on your current location"
+                                            className="absolute top-3 left-3 z-[500] bg-slate-950/90 border border-slate-800 hover:border-teal-500 disabled:opacity-60 rounded-xl px-3 py-2 text-[11px] font-bold text-slate-200 hover:text-teal-400 backdrop-blur-sm transition flex items-center gap-1.5 shadow-lg"
+                                        >
+                                            <span>{locating ? '⏳' : '📍'}</span> {locating ? 'Locating…' : 'Find Me'}
+                                        </button>
+                                    )}
                                     {!mapReady && (
                                         <div className="absolute inset-0 flex items-center justify-center p-6 pointer-events-none">
                                             <div className="text-center text-xs text-slate-500 max-w-xs">
