@@ -1056,8 +1056,12 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     const s = String(val ?? '');
                     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
                 };
-                const header = ['Location Name', 'Coordinates', 'Bird', 'Rare (Y/N)', 'Last Reported', 'Seen (Y/N)'];
-                const rows = filteredRecords.map(r => [r.locationName, r.coordinates, r.bird, r.rare, r.lastReported, r.seen].map(escapeCsv).join(','));
+                const header = ['Location Name', 'Coordinates', 'Bird', 'Rare (Y/N)', 'Last Reported', 'Seen (Y/N)', 'Region', 'Checklist URL'];
+                const rows = filteredRecords.map(r => [
+                    r.locationName, r.coordinates, r.bird, r.rare, r.lastReported, r.seen,
+                    r.region || '',
+                    r.checklistId ? `https://ebird.org/checklist/${r.checklistId}` : ''
+                ].map(escapeCsv).join(','));
                 const csv = [header.join(','), ...rows].join('\n');
                 const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
@@ -1113,7 +1117,8 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     bird: o.comName,
                     rare: notableKeys.has(`${o.locId}|${o.speciesCode}`) ? 'Y' : 'N',
                     lastReported: formatLongDate(parseFlexibleDate(o.obsDt)),
-                    region: regionCode
+                    region: regionCode,
+                    checklistId: o.subId || ''
                 });
                 return [...recent, ...notable].filter(o => o.comName && o.locName).map(toEntry);
             };
@@ -1279,7 +1284,10 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                             coordinates: existing.coordinates || entry.coordinates,
                             rare: existing.rare === 'Y' || entry.rare === 'Y' ? 'Y' : 'N',
                             lastReported: newer ? entry.lastReported : existing.lastReported,
-                            region: existing.region || entry.region || ''
+                            region: existing.region || entry.region || '',
+                            // Checklist link should point at whichever report the winning date
+                            // came from, not be stuck on the original one forever.
+                            checklistId: newer ? (entry.checklistId || existing.checklistId || '') : (existing.checklistId || entry.checklistId || '')
                         });
                         updated++;
                     } else {
@@ -1290,7 +1298,8 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                             bird: entry.bird,
                             rare: entry.rare,
                             lastReported: entry.lastReported,
-                            region: entry.region || ''
+                            region: entry.region || '',
+                            checklistId: entry.checklistId || ''
                         });
                         added++;
                     }
@@ -1847,6 +1856,18 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                                     >
                                                         eBird ↗
                                                     </a>
+                                                    {r.checklistId && (
+                                                        <a
+                                                            href={`https://ebird.org/checklist/${r.checklistId}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            title="View the eBird checklist this sighting was reported on"
+                                                            className="px-2.5 py-1 rounded bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-teal-400 border border-slate-800 text-[10px] font-bold tracking-tight transition"
+                                                        >
+                                                            📋 Checklist ↗
+                                                        </a>
+                                                    )}
                                                     <button 
                                                         onClick={(e) => { e.stopPropagation(); toggleSeen(r); }} 
                                                         title={r.isOverridden ? "Manually overridden — click to flip" : "Derived from your life list — click to override"}
@@ -1998,8 +2019,9 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
         // derived at render time by comparing each bird against the uploaded eBird life list
         // (see computeSeen / useLifeListSet below), with room for manual overrides that survive
         // TSV re-imports (see seenOverrides state in App). A "Region" column (eBird region code,
-        // e.g. US-MA-001) was added for multi-region support; it's optional/blank for older or
-        // manually-added rows, which just won't be excluded by the region filter.
+        // e.g. US-MA-001) was added for multi-region support, and a "Checklist ID" column (eBird
+        // submission ID, e.g. S123456789) links a sighting back to the exact checklist it came
+        // from. Both are optional/blank for older or manually-added rows.
         function parseTSV(text) {
             const lines = text.trim().split('\n');
             const result = [];
@@ -2018,6 +2040,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 const rare = cols[3]?.trim() || "N";
                 const date = cols[4]?.trim() || "";
                 const region = cols[5]?.trim() || "";
+                const checklistId = cols[6]?.trim() || "";
 
                 if (loc !== "") {
                     currentLoc = loc;
@@ -2031,14 +2054,15 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     bird: bird,
                     rare: rare,
                     lastReported: date,
-                    region: region
+                    region: region,
+                    checklistId: checklistId
                 });
             }
             return result;
         }
 
         function recordsToTSV(records) {
-            const header = "Location Name\tCoordinates\tBird\tRare (Y/N)\tLast Reported\tRegion";
+            const header = "Location Name\tCoordinates\tBird\tRare (Y/N)\tLast Reported\tRegion\tChecklist ID";
             let lastLoc = "";
             let lastCoords = "";
             const rows = records.map(r => {
@@ -2050,7 +2074,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     lastLoc = r.locationName;
                     lastCoords = r.coordinates;
                 }
-                return `${locCol}\t${coordCol}\t${r.bird}\t${r.rare}\t${r.lastReported}\t${r.region || ''}`;
+                return `${locCol}\t${coordCol}\t${r.bird}\t${r.rare}\t${r.lastReported}\t${r.region || ''}\t${r.checklistId || ''}`;
             });
             return [header, ...rows].join('\n');
         }
