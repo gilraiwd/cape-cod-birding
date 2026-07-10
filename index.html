@@ -510,7 +510,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
 
             const isWithinDateRange = (record) => {
                 if (dateRangeFilter === 'ALL') return true;
-                const recordDate = new Date(record.lastReported || 0);
+                const recordDate = parseFlexibleDate(record.lastReported);
                 if (isNaN(recordDate)) return true; // don't hide rows with unparseable dates
                 if (dateRangeFilter === 'CUSTOM') {
                     if (customDateFrom && recordDate < new Date(customDateFrom)) return false;
@@ -555,7 +555,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
 
             const [isAddOpen, setIsAddOpen] = useState(false);
             const [newBird, setNewBird] = useState({
-                locationName: '', coordinates: '', bird: '', rare: 'N', lastReported: 'Thursday, July 9, 2026'
+                locationName: '', coordinates: '', bird: '', rare: 'N', lastReported: formatLongDate(new Date())
             });
 
             // Capture install criteria
@@ -616,7 +616,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
                 const todayTargets = enrichedRecords.filter(r => {
                     if (r.rare !== 'Y' || r.seen !== 'N') return false;
-                    const d = new Date(r.lastReported || 0);
+                    const d = parseFlexibleDate(r.lastReported);
                     return !isNaN(d) && d >= startOfToday;
                 });
 
@@ -680,7 +680,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 }).sort((a, b) => {
                     if (sortBy === 'location') return a.locationName.localeCompare(b.locationName);
                     if (sortBy === 'bird') return a.bird.localeCompare(b.bird);
-                    if (sortBy === 'date') return new Date(b.lastReported || 0) - new Date(a.lastReported || 0);
+                    if (sortBy === 'date') return parseFlexibleDate(b.lastReported) - parseFlexibleDate(a.lastReported);
                     if (sortBy === 'status') return b.seen.localeCompare(a.seen);
                     return 0;
                 });
@@ -927,7 +927,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 const updated = [...birdRecords, { ...newBird, id: `custom-${Date.now()}` }];
                 setRawData(recordsToTSV(updated));
                 setIsAddOpen(false);
-                setNewBird({ locationName: '', coordinates: '', bird: '', rare: 'N', lastReported: 'Thursday, July 9, 2026' });
+                setNewBird({ locationName: '', coordinates: '', bird: '', rare: 'N', lastReported: formatLongDate(new Date()) });
                 showToast("Added target successfully!");
             };
 
@@ -1247,7 +1247,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     const key = `${entry.locationName}|${entry.bird}`.toLowerCase();
                     const existing = byKey.get(key);
                     if (existing) {
-                        const newer = new Date(entry.lastReported || 0) >= new Date(existing.lastReported || 0);
+                        const newer = parseFlexibleDate(entry.lastReported) >= parseFlexibleDate(existing.lastReported);
                         byKey.set(key, {
                             ...existing,
                             coordinates: existing.coordinates || entry.coordinates,
@@ -1871,6 +1871,18 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                         <label className="text-slate-400 block font-bold mb-1">Species Name</label>
                                         <input type="text" required placeholder="e.g. Common Murre" value={newBird.bird} onChange={(e) => setNewBird({ ...newBird, bird: e.target.value })} className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-lg px-3 py-1.5 focus:outline-none"/>
                                     </div>
+                                    <div>
+                                        <label className="text-slate-400 block font-bold mb-1">Date Reported</label>
+                                        <input
+                                            type="date"
+                                            value={(() => {
+                                                const d = new Date(newBird.lastReported);
+                                                return isNaN(d) ? '' : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                                            })()}
+                                            onChange={(e) => setNewBird({ ...newBird, lastReported: formatLongDate(parseFlexibleDate(e.target.value)) })}
+                                            className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-lg px-3 py-1.5 focus:outline-none"
+                                        />
+                                    </div>
                                     <div className="flex justify-end gap-2 pt-2">
                                         <button type="button" onClick={() => setIsAddOpen(false)} className="bg-slate-800 text-slate-300 px-3 py-1.5 rounded-lg font-bold">Cancel</button>
                                         <button type="submit" className="bg-teal-500 text-slate-950 px-4 py-1.5 rounded-lg font-bold hover:bg-teal-400 transition">Submit</button>
@@ -2024,17 +2036,24 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             return isNaN(dt) ? '' : dt.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
         }
 
-        // Parses a "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" string as LOCAL time, always. Bare
-        // "YYYY-MM-DD" strings are parsed as UTC midnight per the JS spec — for anyone west of
-        // UTC (all of the US), that rolls back to the *previous* calendar day once rendered in
-        // local time, so a sighting truly reported "today" could get silently mislabeled
-        // "yesterday" and vanish from a "Last 24h" filter. Appending a bare time component
-        // forces local-time parsing instead, regardless of whether the source string had one.
+        // Parses a date string as LOCAL time, always — safe to call on either this app's own
+        // "Weekday, Month Day, Year" display strings (see formatLongDate) or on raw ISO-ish
+        // "YYYY-MM-DD" / "YYYY-MM-DD HH:MM" strings coming straight from eBird/docx sources.
+        // Only the latter shape needs help: a bare ISO date-only string parses as UTC midnight
+        // per the JS spec, which rolls back to the *previous* calendar day once rendered in a
+        // timezone behind UTC (all of the US) — so a sighting truly reported "today" could get
+        // silently mislabeled "yesterday" and vanish from a "Last 24h" filter. Forcing a local
+        // time component onto exactly that shape fixes it; every other string (including this
+        // app's display format, which already parses correctly as local time) is left alone —
+        // running that same transform on a non-ISO string would mangle it into "Invalid Date".
         function parseFlexibleDate(str) {
             if (!str) return new Date(NaN);
-            const hasTime = /\d{1,2}:\d{2}/.test(str);
-            const normalized = str.trim().replace(' ', 'T');
-            return new Date(hasTime ? normalized : `${normalized}T00:00:00`);
+            const trimmed = String(str).trim();
+            const isoMatch = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{1,2}:\d{2}))?$/.exec(trimmed);
+            if (isoMatch) {
+                return new Date(`${isoMatch[1]}T${isoMatch[2] || '00:00'}:00`);
+            }
+            return new Date(trimmed);
         }
 
         // Parses an uploaded eBird life list CSV export and returns a sorted array of unique
