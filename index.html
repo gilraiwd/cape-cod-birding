@@ -708,40 +708,53 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             }, [filteredRecords, enrichedRecords]);
 
             // Map Booting Pipeline. Leaflet + the markercluster plugin are both loaded
-            // synchronously via <script> tags in <head>, so window.L (with L.markerClusterGroup
-            // already attached) is guaranteed ready before this inline script runs — no need to
-            // inject/await them here. (A previous version dynamically re-injected leaflet.js as a
-            // defensive fallback; that actually broke clustering, since re-running leaflet.js
-            // replaces window.L with a fresh object that the markercluster plugin never touched.)
+            // synchronously via <script> tags in <head>, so window.L is guaranteed ready before
+            // this inline script runs. However the *plugin* (a second, separate CDN script) can
+            // still fail independently — network hiccup, ad-blocker, CDN outage — so we don't
+            // assume L.markerClusterGroup exists; if it's missing, fall back to a plain
+            // L.layerGroup (no clustering, but the map still works) instead of throwing and
+            // taking the whole app down with it.
             useEffect(() => {
                 if (typeof window === 'undefined' || !window.L) return;
 
                 const initMap = () => {
                     if (!mapContainerRef.current || mapInstance.current) return;
-                    const map = L.map(mapContainerRef.current, { zoomControl: false }).setView([41.80, -70.30], 10);
-                    mapInstance.current = map;
-                    markerLayerGroup.current = L.markerClusterGroup({
-                        maxClusterRadius: 55,
-                        spiderfyOnMaxZoom: true,
-                        showCoverageOnHover: false,
-                        disableClusteringAtZoom: 15, // markers split apart into individual pins past this zoom
-                        iconCreateFunction: (cluster) => {
-                            const children = cluster.getAllChildMarkers();
-                            const hasAmber = children.some(m => m.options.cbcStatus === 'amber');
-                            const hasBlue = !hasAmber && children.some(m => m.options.cbcStatus === 'blue');
-                            const cls = hasAmber ? 'cbc-cluster-amber' : hasBlue ? 'cbc-cluster-blue' : 'cbc-cluster-green';
-                            const count = cluster.getChildCount();
-                            const size = Math.min(56, Math.max(32, 24 + Math.sqrt(count) * 6));
-                            return L.divIcon({
-                                html: `<div class="cbc-cluster-icon ${cls}" style="width:${size}px;height:${size}px;">${count}</div>`,
-                                className: '',
-                                iconSize: L.point(size, size)
-                            });
+                    try {
+                        const map = L.map(mapContainerRef.current, { zoomControl: false }).setView([41.80, -70.30], 10);
+                        mapInstance.current = map;
+
+                        if (typeof L.markerClusterGroup === 'function') {
+                            markerLayerGroup.current = L.markerClusterGroup({
+                                maxClusterRadius: 55,
+                                spiderfyOnMaxZoom: true,
+                                showCoverageOnHover: false,
+                                disableClusteringAtZoom: 15, // markers split apart into individual pins past this zoom
+                                iconCreateFunction: (cluster) => {
+                                    const children = cluster.getAllChildMarkers();
+                                    const hasAmber = children.some(m => m.options.cbcStatus === 'amber');
+                                    const hasBlue = !hasAmber && children.some(m => m.options.cbcStatus === 'blue');
+                                    const cls = hasAmber ? 'cbc-cluster-amber' : hasBlue ? 'cbc-cluster-blue' : 'cbc-cluster-green';
+                                    const count = cluster.getChildCount();
+                                    const size = Math.min(56, Math.max(32, 24 + Math.sqrt(count) * 6));
+                                    return L.divIcon({
+                                        html: `<div class="cbc-cluster-icon ${cls}" style="width:${size}px;height:${size}px;">${count}</div>`,
+                                        className: '',
+                                        iconSize: L.point(size, size)
+                                    });
+                                }
+                            }).addTo(map);
+                        } else {
+                            console.warn('Leaflet.markercluster failed to load — showing markers without clustering.');
+                            markerLayerGroup.current = L.layerGroup().addTo(map);
                         }
-                    }).addTo(map);
-                    L.control.zoom({ position: 'topright' }).addTo(map);
-                    setLeafletLoaded(true);
-                    setMapReady(true);
+
+                        L.control.zoom({ position: 'topright' }).addTo(map);
+                        setLeafletLoaded(true);
+                        setMapReady(true);
+                    } catch (err) {
+                        console.error('Map initialization failed:', err);
+                        setMapReady(false);
+                    }
                 };
 
                 initMap();
@@ -1879,8 +1892,41 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             return Array.from(byKey.values());
         }
 
+        // Safety net: without this, an uncaught error anywhere in App (a bad CDN load, an
+        // unexpected API response shape, etc.) unmounts the entire React tree and leaves a
+        // blank white page with no clue why. This catches that and shows a visible, recoverable
+        // message instead — data in localStorage is untouched either way.
+        class ErrorBoundary extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { error: null };
+            }
+            static getDerivedStateFromError(error) {
+                return { error };
+            }
+            componentDidCatch(error, info) {
+                console.error('Cape Cod Birding Console crashed:', error, info);
+            }
+            render() {
+                if (this.state.error) {
+                    return (
+                        <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
+                            <div className="max-w-md space-y-4 text-center">
+                                <div className="text-4xl">🦉</div>
+                                <h1 className="text-lg font-black text-rose-400">Something broke</h1>
+                                <p className="text-sm text-slate-400">The app hit an unexpected error and couldn't render. Your saved data (life lists, sightings, settings) is untouched in this browser's storage — reloading is safe to try.</p>
+                                <pre className="text-left text-[10px] text-slate-500 bg-slate-900 border border-slate-800 rounded-lg p-3 overflow-auto max-h-32">{String(this.state.error && this.state.error.message || this.state.error)}</pre>
+                                <button onClick={() => window.location.reload()} className="bg-teal-500 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs hover:bg-teal-400 transition">Reload</button>
+                            </div>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        root.render(<ErrorBoundary><App /></ErrorBoundary>);
     </script>
 </body>
 </html>
