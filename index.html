@@ -599,10 +599,21 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 const priorityCount = enrichedRecords.filter(r => r.rare === 'Y' && r.seen === 'N').length;
                 const uniqueSpots = new Set(enrichedRecords.map(r => r.locationName)).size;
 
+                // Today's Targets: unseen rares reported in the last 24h — the actionable,
+                // time-sensitive subset. Computed against "now" regardless of whatever date
+                // filter is currently active in the UI, so the button/banner is always accurate.
+                const dayAgo = new Date();
+                dayAgo.setDate(dayAgo.getDate() - 1);
+                const todayTargets = enrichedRecords.filter(r => {
+                    if (r.rare !== 'Y' || r.seen !== 'N') return false;
+                    const d = new Date(r.lastReported || 0);
+                    return !isNaN(d) && d >= dayAgo;
+                });
+
                 return {
                     total, seenCount, unseenCount: total - seenCount,
                     seenPercentage: total > 0 ? Math.round((seenCount / total) * 100) : 0,
-                    rareCount, priorityCount, uniqueSpots
+                    rareCount, priorityCount, uniqueSpots, todayTargets
                 };
             }, [enrichedRecords]);
 
@@ -884,6 +895,20 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
 
             const handleMetricClick = (filterType) => {
                 setStatusFilter(prev => prev === filterType ? 'ALL' : filterType);
+            };
+
+            // Jumps straight to "what should I chase today" — unseen rares from the last 24h —
+            // by combining the existing Priority status filter with the existing 24h date filter,
+            // and clearing anything else that might be hiding results (search text, a single
+            // hotspot/region/species focus).
+            const viewTodaysTargets = () => {
+                setStatusFilter('PRIORITY');
+                setDateRangeFilter('24H');
+                setSearchQuery('');
+                setSelectedLocation('ALL');
+                setSelectedBird('ALL');
+                setSelectedRegion('ALL');
+                showToast(`Showing ${stats.todayTargets.length} unseen rare target(s) from the last 24h.`);
             };
 
             const handleAddSubmit = (e) => {
@@ -1223,6 +1248,13 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                         <span>📲</span> Install App
                                     </button>
                                 )}
+                                <button
+                                    onClick={viewTodaysTargets}
+                                    className={`font-black px-3.5 py-2 rounded-xl text-xs shadow-lg transition flex items-center gap-1.5 ${stats.todayTargets.length > 0 ? 'bg-rose-500 text-white hover:bg-rose-400 shadow-rose-500/30' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700'}`}
+                                    title="Unseen rare birds reported in the last 24 hours"
+                                >
+                                    <span>🔥</span> Today's Targets{stats.todayTargets.length > 0 ? ` (${stats.todayTargets.length})` : ''}
+                                </button>
                                 <button onClick={() => setIsAddOpen(true)} className="bg-teal-500 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs shadow-lg hover:bg-teal-400 transition">+ Sighting</button>
                                 <button onClick={() => { setPastedData(rawData); setShowSyncPanel(!showSyncPanel); }} className="bg-slate-800 text-slate-300 border border-slate-700 font-semibold px-4 py-2 rounded-xl text-xs hover:bg-slate-700 transition">Sync TSV</button>
                                 <button onClick={() => setShowImportPanel(!showImportPanel)} className="bg-slate-800 text-slate-300 border border-slate-700 font-semibold px-4 py-2 rounded-xl text-xs hover:bg-slate-700 transition">Import</button>
@@ -1385,6 +1417,23 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                 <div className="flex justify-end gap-2 text-xs">
                                     <button onClick={() => { setRawData(pastedData); setShowSyncPanel(false); showToast("Checklist synced!"); }} className="bg-teal-500 text-slate-950 px-4 py-1.5 rounded font-bold">Apply</button>
                                 </div>
+                            </div>
+                        )}
+
+                        {stats.todayTargets.length > 0 && (
+                            <div className="bg-gradient-to-r from-rose-950/60 to-slate-900 border border-rose-500/30 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex items-center gap-3">
+                                    <span className="text-2xl">🔥</span>
+                                    <div>
+                                        <h3 className="text-sm font-black text-white">
+                                            {stats.todayTargets.length} unseen rare {stats.todayTargets.length === 1 ? 'bird' : 'birds'} reported in the last 24h
+                                        </h3>
+                                        <p className="text-[11px] text-slate-400 mt-0.5">
+                                            {stats.todayTargets.slice(0, 3).map(r => r.bird).join(', ')}{stats.todayTargets.length > 3 ? `, +${stats.todayTargets.length - 3} more` : ''}
+                                        </p>
+                                    </div>
+                                </div>
+                                <button onClick={viewTodaysTargets} className="bg-rose-500 hover:bg-rose-400 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-lg shadow-rose-500/20 transition shrink-0">View Today's Targets</button>
                             </div>
                         )}
 
