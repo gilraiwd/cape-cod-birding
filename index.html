@@ -751,6 +751,22 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                         L.control.zoom({ position: 'topright' }).addTo(map);
                         setLeafletLoaded(true);
                         setMapReady(true);
+
+                        // Leaflet measures its container's pixel size once at init time. The
+                        // Tailwind CDN build injects its generated stylesheet asynchronously
+                        // (after this script has already run), so on first paint the container
+                        // can still be 0×0 when Leaflet grabs its size — producing a permanently
+                        // blank map even though the div visibly has a size a moment later. Force
+                        // Leaflet to re-measure shortly after mount, and again whenever the
+                        // container itself resizes (panel toggles, window resize, etc).
+                        requestAnimationFrame(() => map.invalidateSize());
+                        setTimeout(() => map.invalidateSize(), 300);
+
+                        if (typeof ResizeObserver !== 'undefined') {
+                            const resizeObserver = new ResizeObserver(() => map.invalidateSize());
+                            resizeObserver.observe(mapContainerRef.current);
+                            mapInstance.current._cbcResizeObserver = resizeObserver;
+                        }
                     } catch (err) {
                         console.error('Map initialization failed:', err);
                         setMapReady(false);
@@ -761,6 +777,9 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
 
                 return () => {
                     if (mapInstance.current) {
+                        if (mapInstance.current._cbcResizeObserver) {
+                            mapInstance.current._cbcResizeObserver.disconnect();
+                        }
                         mapInstance.current.remove();
                         mapInstance.current = null;
                         setMapReady(false);
@@ -1013,7 +1032,18 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             };
 
             const removeRegion = (code) => {
+                const affected = birdRecords.filter(r => r.region === code);
+                const proceed = affected.length === 0
+                    ? true
+                    : confirm(`Remove region ${code}? This will also delete ${affected.length} sighting record(s) tagged with it (across ${new Set(affected.map(r => r.locationName)).size} hotspot(s)).`);
+                if (!proceed) return;
+
                 setEbirdRegions(prev => prev.filter(r => r !== code));
+                if (affected.length > 0) {
+                    const updated = birdRecords.filter(r => r.region !== code);
+                    setRawData(recordsToTSV(updated));
+                }
+                showToast(`Removed region ${code}${affected.length > 0 ? ` and ${affected.length} record(s)` : ''}.`);
             };
 
             // Auto-sync once per day on load, if a key is present.
