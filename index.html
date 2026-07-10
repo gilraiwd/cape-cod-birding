@@ -12,39 +12,16 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#020617">
     
-    <!-- Touch Icon Representation -->
-    <link rel="apple-touch-icon" href="https://img.icons8.com/color/512/binoculars.png">
-    
-    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Leaflet GIS Map CDN -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-    
-    <!-- React & Babel Standalone CDNs -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Inline Web App Manifest Data-URI -->
-    <link rel="manifest" href='data:application/manifest+json,{"name":"Cape Cod Birding Console","short_name":"CapeBirding","start_url":".","display":"standalone","background_color":"#020617","theme_color":"#0f172a","description":"Tactical bird tracking portal with live mapping.","icons":[{"src":"https://cdn-icons-png.flaticon.com/512/3069/3069172.png","sizes":"512x512","type":"image/png"}]}'>
-
     <style>
-        /* Dark Theme Leaflet customization */
-        .leaflet-popup-content-wrapper {
-            background: #0f172a !important;
-            color: #f1f5f9 !important;
-            border: 1px solid #334155 !important;
-            border-radius: 12px !important;
-        }
-        .leaflet-popup-tip {
-            background: #0f172a !important;
-            border: 1px solid #334155 !important;
-        }
-        .leaflet-container {
-            touch-action: none;
-        }
+        .leaflet-popup-content-wrapper { background: #0f172a !important; color: #f1f5f9 !important; border: 1px solid #334155 !important; border-radius: 12px !important; }
+        .leaflet-popup-tip { background: #0f172a !important; border: 1px solid #334155 !important; }
     </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen">
@@ -55,223 +32,61 @@
 
         const INITIAL_RAW_DATA = `Location Name	Coordinates	Bird	Rare (Y/N)	Last Reported
 Barnstable Clean Water Coalition Cranberry Bogs	41.6714674, -70.4275267	Canada Goose	N	Thursday, July 9, 2026
-		Mute Swan	N	Thursday, July 9, 2026
-		Mallard	N	Thursday, July 9, 2026
-		Mourning Dove	N	Thursday, July 9, 2026
-		Great Egret	N	Thursday, July 9, 2026
-		Great Blue Heron	N	Thursday, July 9, 2026
-		Red-bellied Woodpecker	N	Thursday, July 9, 2026
-		Red-tailed Hawk	N	Thursday, July 9, 2026
 Santuit Pond Preserve	41.6508633, -70.4546785	Canada Goose	N	Wednesday, July 8, 2026
 Water Street Marsh, Yarmouth	41.7107104, -70.2602398	Canada Goose	N	Thursday, July 9, 2026
-		Chimney Swift	N	Thursday, July 9, 2026
-		Belted Kingfisher	N	Thursday, July 9, 2026
 Woods Hole--Great Harbor	41.5230215, -70.6763148	Canada Goose	N	Wednesday, July 8, 2026
-		Mallard	N	Wednesday, July 8, 2026
-		Surf Scoter	N	Wednesday, July 8, 2026
 Cape Cod Canal Bike Paths, Buzzards Bay	41.74326, -70.612899	Mute Swan	N	Wednesday, July 8, 2026
-		Rock Pigeon	N	Wednesday, July 8, 2026
-		Roseate Tern	N	Wednesday, July 8, 2026
 Cold Brook Preserve	41.6766572, -70.0687389	Mute Swan	N	Thursday, July 9, 2026
-		American Herring Gull	N	Thursday, July 9, 2026
-		Black-crowned Night Heron	N	Thursday, July 9, 2026
-		Snowy Egret	N	Thursday, July 9, 2026
-		Great Blue Heron	N	Thursday, July 9, 2026
-		Osprey	N	Thursday, July 9, 2026
-		Northern Harrier	N	Thursday, July 9, 2026
-		Eastern Phoebe	N	Thursday, July 9, 2026
 Pogorelc Sanctuary	41.699604, -70.355493	Wood Duck	N	Wednesday, July 8, 2026
-		Mallard	N	Wednesday, July 8, 2026
-		Yellow-crowned Night Heron	Y	Thursday, July 9, 2026
-		Black-crowned Night Heron	N	Wednesday, July 8, 2026
 Woodneck Beach and Marsh	41.5750275, -70.6413388	Mallard	N	Wednesday, July 8, 2026
 Bell's Neck Conservation Area	41.6840342, -70.1129007	American Black Duck	N	Thursday, July 9, 2026
-		Killdeer	N	Thursday, July 9, 2026
-		Least Sandpiper	N	Thursday, July 9, 2026
-		Laughing Gull	N	Thursday, July 9, 2026
-		Black-crowned Night Heron	N	Thursday, July 9, 2026
-		Snowy Egret	N	Thursday, July 9, 2026
-		Great Egret	N	Thursday, July 9, 2026
-		Osprey	N	Thursday, July 9, 2026
-		Red-bellied Woodpecker	N	Thursday, July 9, 2026
-		Downy Woodpecker	N	Thursday, July 9, 2026
-		Northern Flicker	N	Thursday, July 9, 2026
-		Eastern Wood-Pewee	N	Thursday, July 9, 2026
 High Head, Pilgrim Heights	42.0563031, -70.1161194	American Black Duck	N	Wednesday, July 8, 2026
-		Red-breasted Merganser	N	Wednesday, July 8, 2026
-		Spotted Sandpiper	N	Wednesday, July 8, 2026
-		Common Loon	N	Wednesday, July 8, 2026
 Old Wharf Rd. Marshes Chatham	41.7011872, -69.9513489	American Black Duck	N	Thursday, July 9, 2026
-		Killdeer	N	Thursday, July 9, 2026
-		Green Heron	N	Thursday, July 9, 2026
 Wellfleet Bay Wildlife Sanctuary	41.8825315, -69.995712	American Black Duck	N	Thursday, July 9, 2026
-		Killdeer	N	Thursday, July 9, 2026
-		Semipalmated Plover	N	Thursday, July 9, 2026
-		Piping Plover	N	Thursday, July 9, 2026
-		Short-billed Dowitcher	N	Thursday, July 9, 2026
-		Semipalmated Sandpiper	N	Thursday, July 9, 2026
-		Yellow-crowned Night Heron	Y	Thursday, July 9, 2026
-		Little Blue Heron	Y	Thursday, July 9, 2026
-		Hairy Woodpecker	N	Thursday, July 9, 2026
 Wellfleet Town Pier	41.93002, -70.0276762	American Black Duck	N	Thursday, July 9, 2026
-		Rock Pigeon	N	Thursday, July 9, 2026
-		Laughing Gull	N	Thursday, July 9, 2026
-		Ring-billed Gull	N	Thursday, July 9, 2026
-		Double-crested Cormorant	N	Thursday, July 9, 2026
-		Osprey	N	Thursday, July 9, 2026
-		Great Blue Heron	N	Thursday, July 9, 2026
 First Encounter Beach	41.8215025, -70.0037241	Common Eider	N	Thursday, July 9, 2026
-		Black Scoter	N	Thursday, July 9, 2026
-		American Oystercatcher	N	Thursday, July 9, 2026
-		Semipalmated Plover	N	Thursday, July 9, 2026
-		Piping Plover	N	Thursday, July 9, 2026
-		Hudsonian Whimbrel	N	Thursday, July 9, 2026
-		Short-billed Dowitcher	N	Thursday, July 9, 2026
-		Spotted Sandpiper	N	Thursday, July 9, 2026
-		Lesser Yellowlegs	N	Thursday, July 9, 2026
-		Least Sandpiper	N	Thursday, July 9, 2026
-		Bonaparte's Gull	N	Thursday, July 9, 2026
-		Ring-billed Gull	N	Thursday, July 9, 2026
-		Great Black-backed Gull	N	Thursday, July 9, 2026
-		Bridled Tern	Y	Thursday, July 9, 2026
-		Forster's Tern	N	Thursday, July 9, 2026
-		Red-throated Loon	N	Thursday, July 9, 2026
-		Common Loon	N	Thursday, July 9, 2026
-		Wilson's Storm-Petrel	N	Thursday, July 9, 2026
-		Cory's Shearwater	N	Thursday, July 9, 2026
-		Great Shearwater	N	Thursday, July 9, 2026
-		Sooty Shearwater	N	Thursday, July 9, 2026
-		Manx Shearwater	N	Thursday, July 9, 2026
-		Northern Gannet	N	Thursday, July 9, 2026
-		Great Blue Heron	N	Thursday, July 9, 2026
-		Long-tailed Jaeger	Y	Thursday, July 9, 2026
-		South Polar Skua	Y	Thursday, July 9, 2026
 Race Point	42.0691855, -70.2381706	Common Eider	N	Thursday, July 9, 2026
-		White-winged Scoter	N	Thursday, July 9, 2026
-		Red-breasted Merganser	N	Thursday, July 9, 2026
-		Piping Plover	N	Thursday, July 9, 2026
-		Bonaparte's Gull	N	Thursday, July 9, 2026
-		Ring-billed Gull	N	Thursday, July 9, 2026
-		Great Black-backed Gull	N	Thursday, July 9, 2026
-		Lesser Black-backed Gull	N	Thursday, July 9, 2026
-		Iceland Gull	N	Thursday, July 9, 2026
-		Black Tern	N	Thursday, July 9, 2026
-		Arctic Tern	N	Thursday, July 9, 2026
-		Roseate Tern	N	Thursday, July 9, 2026
-		Common Loon	N	Thursday, July 9, 2026
-		Wilson's Storm-Petrel	N	Thursday, July 9, 2026
-		Cory's Shearwater	N	Thursday, July 9, 2026
-		Great Shearwater	N	Thursday, July 9, 2026
-		Sooty Shearwater	N	Thursday, July 9, 2026
-		Manx Shearwater	N	Thursday, July 9, 2026
-		South Polar Skua	Y	Thursday, July 9, 2026
 Head of the Meadow Beach, N. Truro	42.0522244, -70.0795126	Black Scoter	N	Wednesday, July 8, 2026
-		Sooty Shearwater	N	Wednesday, July 8, 2026
 563 Main St, Harwich	41.686806, -70.088225	Wild Turkey	N	Wednesday, July 8, 2026
 95 Race Point Road, Provincetown	42.0623745, -70.1914677	Wild Turkey	N	Wednesday, July 8, 2026
 PCT Old Colony Trail 3–99 Rear Howland, Provincetown	42.061626, -70.178976	Wild Turkey	N	Wednesday, July 8, 2026
-		Black-billed Cuckoo	N	Wednesday, July 8, 2026
-		Hairy Woodpecker	N	Wednesday, July 8, 2026
-		Broad-winged Hawk	N	Wednesday, July 8, 2026
 Provincetown Harbor	42.0476822, -70.1639271	Rock Pigeon	N	Wednesday, July 8, 2026
 West Dennis Beach	41.65, -70.189	Rock Pigeon	N	Wednesday, July 8, 2026
-		Killdeer	N	Wednesday, July 8, 2026
 17 Lakeside Terrace, Harwich	41.7018115, -70.046262	Mourning Dove	N	Wednesday, July 8, 2026
-		Green Heron	N	Wednesday, July 8, 2026
-		Northern Flicker	N	Wednesday, July 8, 2026
 70 Church Road, Eastham	41.8605272, -69.9916186	Mourning Dove	N	Wednesday, July 8, 2026
 800–842 Iyannough Rd, Barnstable	41.670433, -70.299134	Mourning Dove	N	Wednesday, July 8, 2026
-		Great Blue Heron	N	Wednesday, July 8, 2026
 Buck's Creek	41.673952, -70.0011545	Mourning Dove	N	Wednesday, July 8, 2026
-		American Oystercatcher	N	Wednesday, July 8, 2026
-		Killdeer	N	Wednesday, July 8, 2026
-		Spotted Sandpiper	N	Wednesday, July 8, 2026
-		Willet (Eastern)	N	Wednesday, July 8, 2026
-		Greater Yellowlegs	N	Wednesday, July 8, 2026
-		Laughing Gull	N	Wednesday, July 8, 2026
-		American Herring Gull	N	Wednesday, July 8, 2026
-		Great Black-backed Gull	N	Wednesday, July 8, 2026
-		Least Tern	N	Wednesday, July 8, 2026
-		Common Tern	N	Wednesday, July 8, 2026
-		Double-crested Cormorant	N	Wednesday, July 8, 2026
-		Glossy Ibis	N	Wednesday, July 8, 2026
-		Snowy Egret	N	Wednesday, July 8, 2026
-		Great Egret	N	Wednesday, July 8, 2026
 Camp Edwards: KD Range Area	41.6982516, -70.5351875	Eastern Whip-poor-will	N	Wednesday, July 8, 2026
 2–6 S Orleans Rd, Orleans	41.791161, -69.987078	Chimney Swift	N	Wednesday, July 8, 2026
 Cape Cod Canal--Herring Run	41.7736001, -70.560143	Chimney Swift	N	Wednesday, July 8, 2026
-		Black Tern	N	Wednesday, July 8, 2026
-		Forster's Tern	N	Wednesday, July 8, 2026
-		Roseate Tern	N	Wednesday, July 8, 2026
-		Turkey Vulture	N	Wednesday, July 8, 2026
-		Broad-winged Hawk	N	Wednesday, July 8, 2026
-		Red-shouldered Hawk	N	Wednesday, July 8, 2026
 Mayflower St, Provincetown	42.052353, -70.191056	Chimney Swift	N	Wednesday, July 8, 2026
-		Turkey Vulture	N	Wednesday, July 8, 2026
 Stony Beach, Woods Hole	41.528885, -70.6740189	Chimney Swift	N	Wednesday, July 8, 2026
 33 Beach Plum Circle, Harwich	41.7039059, -70.0442548	Ruby-throated Hummingbird	N	Wednesday, July 8, 2026
 D&F Clapp's House, Brewster	41.737297, -70.088562	Ruby-throated Hummingbird	N	Wednesday, July 8, 2026
-		Red-bellied Woodpecker	N	Wednesday, July 8, 2026
-		Downy Woodpecker	N	Wednesday, July 8, 2026
 Thompson's Field--North of Cape Cod Rail Trail	41.6906041, -70.053463	Ruby-throated Hummingbird	N	Wednesday, July 8, 2026
-		Northern Flicker	N	Wednesday, July 8, 2026
-		Red-tailed Hawk	N	Wednesday, July 8, 2026
 Wequassett Resort And Golf Club, Harwich	41.721876, -69.997136	Ruby-throated Hummingbird	N	Wednesday, July 8, 2026
-		Spotted Sandpiper	N	Wednesday, July 8, 2026
-		Double-crested Cormorant	N	Wednesday, July 8, 2026
 Forest Beach and Conservation Lands, Chatham	41.6700588, -70.0253749	American Oystercatcher	N	Wednesday, July 8, 2026
-		Piping Plover	N	Wednesday, July 8, 2026
-		Hudsonian Whimbrel	N	Wednesday, July 8, 2026
-		Greater Yellowlegs	N	Wednesday, July 8, 2026
-		Least Tern	N	Wednesday, July 8, 2026
-		Green Heron	N	Wednesday, July 8, 2026
-		Glossy Ibis	N	Wednesday, July 8, 2026
 Sandwich Marina	41.7736623, -70.4996526	Killdeer	N	Wednesday, July 8, 2026
-		Least Sandpiper	N	Wednesday, July 8, 2026
-		American Herring Gull	N	Wednesday, July 8, 2026
-		Least Tern	N	Wednesday, July 8, 2026
-		Common Tern	N	Wednesday, July 8, 2026
-		Double-crested Cormorant	N	Wednesday, July 8, 2026
 Brewster Wing Island	41.7574055, -70.1181364	Piping Plover	N	Wednesday, July 8, 2026
-		Willet	N	Wednesday, July 8, 2026
-		Great Egret	N	Wednesday, July 8, 2026
-		Turkey Vulture	N	Wednesday, July 8, 2026
-		Osprey	N	Wednesday, July 8, 2026
-		Hairy Woodpecker	N	Wednesday, July 8, 2026
 Skaket Beach, Orleans	41.7958561, -70.0159979	Willet	N	Wednesday, July 8, 2026
-		Laughing Gull	N	Wednesday, July 8, 2026
-		Ring-billed Gull	N	Wednesday, July 8, 2026
-		American Herring Gull	N	Wednesday, July 8, 2026
-		Great Black-backed Gull	N	Wednesday, July 8, 2026
-		Forster's Tern	N	Wednesday, July 8, 2026
-		Northern Flicker	N	Wednesday, July 8, 2026
 Cotchpincut Rd. Landing	41.7078238, -69.9537076	Greater Yellowlegs	N	Wednesday, July 8, 2026
-		Snowy Egret	N	Wednesday, July 8, 2026
-		Green Heron	N	Wednesday, July 8, 2026
 Crowes Pasture	41.7566589, -70.1302707	Semipalmated Sandpiper	N	Wednesday, July 8, 2026
 Fort Hill, Eastham	41.818792, -69.9644995	Semipalmated Sandpiper	N	Wednesday, July 8, 2026
-		Willow Flycatcher	N	Wednesday, July 8, 2026
 Hemenway Landing	41.8230296, -69.9652719	Bonaparte's Gull	N	Wednesday, July 8, 2026
 Woods Hole--Quissett Campus	41.5337912, -70.6484349	American Herring Gull	N	Wednesday, July 8, 2026
-		Common Tern	N	Wednesday, July 8, 2026
 21 BP Mud Pond Walkabout	41.725565, -70.0259799	Glossy Ibis	N	Wednesday, July 8, 2026
-		Little Blue Heron	Y	Thursday, July 9, 2026
 Follins Pond, Observations FP Rd Landing Yarmouth Port	41.7100096, -70.1863074	Black-crowned Night Heron	N	Wednesday, July 8, 2026
 298–300 US-6, Truro	42.012752, -70.070103	Turkey Vulture	N	Wednesday, July 8, 2026
 4477 Falmouth Rd, Barnstable	41.640256, -70.444268	Turkey Vulture	N	Wednesday, July 8, 2026
-		Red-shouldered Hawk	N	Wednesday, July 8, 2026
 Osterville Home at 109 Marquand Dr, Barnstable	41.649966, -70.407592	Swallow-tailed Kite	Y	Thursday, July 9, 2026
 2490 US-6, Wellfleet	41.931384, -70.01831	Cooper's Hawk	N	Wednesday, July 8, 2026
 77 Barley Neck Rd - (Private)	41.778402, -69.9608892	Cooper's Hawk	N	Wednesday, July 8, 2026
-		Red-shouldered Hawk	N	Wednesday, July 8, 2026
 Lovells Pond	41.6489012, -70.4450026	Cooper's Hawk	N	Wednesday, July 8, 2026
 Willowbend Country Club, Mashpee	41.6210568, -70.4599571	Bald Eagle	N	Wednesday, July 8, 2026
-		Red-tailed Hawk	N	Wednesday, July 8, 2026
 66 Sachemas Way, Chatham	41.702068, -70.000799	Broad-winged Hawk	N	Wednesday, July 8, 2026
 Shank Painter Pond Wildlife Sanctuary	42.0486749, -70.2027065	Broad-winged Hawk	N	Wednesday, July 8, 2026
 Ashumet Holly Wildlife Sanctuary	41.62315, -70.53616	Red-shouldered Hawk	N	Wednesday, July 8, 2026
 Woodland Bog, West Barnstable	41.6920007, -70.3693296	Red-tailed Hawk	N	Wednesday, July 8, 2026
-		Eastern Wood-Pewee	N	Wednesday, July 8, 2026
 Woods Hole--Thickets	41.5332863, -70.6460166	Hairy Woodpecker	N	Wednesday, July 8, 2026
 Beebe Woods, Falmouth	41.5639703, -70.6316582	Barred Owl	N	Wednesday, July 8, 2026
 21 Bay Pine, Barnstable	41.7250465, -70.0167166	Downy Woodpecker	N	Wednesday, July 8, 2026
@@ -280,365 +95,133 @@ Great Pond, Barnstable	41.835535, -69.993904	Red-bellied Woodpecker	N	Wednesday,
 Ridgevale RD, South Chatham	41.6745337, -70.004765	Glossy Ibis	N	Wednesday, July 8, 2026
 Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, July 9, 2026`;
 
-        // Direct common name to exact eBird species code conversion map
-        const EBIRD_CODE_MAP = {
-            "Canada Goose": "cangoo",
-            "Mute Swan": "mutswa",
-            "Mallard": "mallar3",
-            "Mourning Dove": "moudo1",
-            "Great Egret": "greegr",
-            "Great Blue Heron": "gbhero",
-            "Red-bellied Woodpecker": "rebwoo",
-            "Red-tailed Hawk": "rthawk",
-            "Chimney Swift": "chiswi",
-            "Belted Kingfisher": "belkin1",
-            "Surf Scoter": "sursco",
-            "Rock Pigeon": "rocpig",
-            "Roseate Tern": "roster",
-            "Snowy Egret": "snoegr",
-            "Black-crowned Night Heron": "bcnher",
-            "Osprey": "osprey",
-            "Northern Harrier": "norhar",
-            "Eastern Phoebe": "easpho",
-            "Wood Duck": "wooduc",
-            "Yellow-crowned Night Heron": "ycnher",
-            "American Black Duck": "ambduc",
-            "Killdeer": "killde",
-            "Least Sandpiper": "leasan",
-            "Laughing Gull": "laugul",
-            "Downy Woodpecker": "dowwoo",
-            "Northern Flicker": "norfli",
-            "Eastern Wood-Pewee": "eawope",
-            "Red-breasted Merganser": "rebmer",
-            "Spotted Sandpiper": "sposan",
-            "Common Loon": "comloo",
-            "Green Heron": "greher",
-            "Semipalmated Plover": "semplo",
-            "Piping Plover": "pipplo",
-            "Short-billed Dowitcher": "shbdow",
-            "Semipalmated Sandpiper": "semsan",
-            "Little Blue Heron": "libher",
-            "Hairy Woodpecker": "haiwoo",
-            "Ring-billed Gull": "ribgul",
-            "Double-crested Cormorant": "doccor",
-            "Common Eider": "comeid",
-            "Black Scoter": "blksco",
-            "American Oystercatcher": "ameoys",
-            "Hudsonian Whimbrel": "whimbr3",
-            "Lesser Yellowlegs": "lesyel",
-            "Bonaparte's Gull": "bongul",
-            "Great Black-backed Gull": "gbbgul",
-            "Bridled Tern": "briter1",
-            "Forster's Tern": "forter",
-            "Red-throated Loon": "retloo",
-            "Wilson's Storm-Petrel": "wispet",
-            "Cory's Shearwater": "corshe",
-            "Great Shearwater": "greshe",
-            "Sooty Shearwater": "sooshe",
-            "Manx Shearwater": "manshe",
-            "Northern Gannet": "norgan",
-            "Long-tailed Jaeger": "lotjae",
-            "South Polar Skua": "sopsku1",
-            "White-winged Scoter": "wwscot",
-            "Lesser Black-backed Gull": "lbbgul",
-            "Iceland Gull": "icegul",
-            "Black Tern": "blkter",
-            "Arctic Tern": "arcter",
-            "Wild Turkey": "wiltur",
-            "Black-billed Cuckoo": "bibcuc",
-            "Broad-winged Hawk": "brwhaw",
-            "Willet (Eastern)": "willet1",
-            "Willet": "willet1",
-            "Greater Yellowlegs": "greyel",
-            "Least Tern": "leater1",
-            "Common Tern": "comter",
-            "Glossy Ibis": "gloibi",
-            "Eastern Whip-poor-will": "easwpw1",
-            "Turkey Vulture": "turvul",
-            "Red-shouldered Hawk": "reshaw",
-            "Ruby-throated Hummingbird": "rthhum",
-            "Willow Flycatcher": "wilfly",
-            "Swallow-tailed Kite": "stkite",
-            "Cooper's Hawk": "coohaw",
-            "Bald Eagle": "baleag",
-            "Barred Owl": "barowl",
-            "Ruby-crowned Kinglet": "ruckin"
+        const EBIRD_MAP = {
+            "Canada Goose": "cangoo", "Mute Swan": "mutswa", "Mallard": "mallar3", "Mourning Dove": "moudo1",
+            "Great Egret": "greegr", "Great Blue Heron": "gbhero", "Red-bellied Woodpecker": "rebwoo", "Red-tailed Hawk": "rthawk",
+            "Chimney Swift": "chiswi", "Belted Kingfisher": "belkin1", "Surf Scoter": "sursco", "Rock Pigeon": "rocpig",
+            "Roseate Tern": "roster", "Snowy Egret": "snoegr", "Black-crowned Night Heron": "bcnher", "Osprey": "osprey",
+            "Northern Harrier": "norhar", "Eastern Phoebe": "easpho", "Wood Duck": "wooduc", "Yellow-crowned Night Heron": "ycnher",
+            "American Black Duck": "ambduc", "Killdeer": "killde", "Least Sandpiper": "leasan", "Laughing Gull": "laugul",
+            "Downy Woodpecker": "dowwoo", "Northern Flicker": "norfli", "Eastern Wood-Pewee": "eawope", "Red-breasted Merganser": "rebmer",
+            "Spotted Sandpiper": "sposan", "Common Loon": "comloo", "Green Heron": "greher", "Semipalmated Plover": "semplo",
+            "Piping Plover": "pipplo", "Short-billed Dowitcher": "shbdow", "Semipalmated Sandpiper": "semsan", "Little Blue Heron": "libher",
+            "Hairy Woodpecker": "haiwoo", "Ring-billed Gull": "ribgul", "Double-crested Cormorant": "doccor", "Common Eider": "comeid",
+            "Black Scoter": "blksco", "American Oystercatcher": "ameoys", "Hudsonian Whimbrel": "whimbr3", "Lesser Yellowlegs": "lesyel",
+            "Bonaparte's Gull": "bongul", "Great Black-backed Gull": "gbbgul", "Bridled Tern": "briter1", "Forster's Tern": "forter",
+            "Red-throated Loon": "retloo", "Wilson's Storm-Petrel": "wispet", "Cory's Shearwater": "corshe", "Great Shearwater": "greshe",
+            "Sooty Shearwater": "sooshe", "Manx Shearwater": "manshe", "Northern Gannet": "norgan", "Long-tailed Jaeger": "lotjae",
+            "South Polar Skua": "sopsku1", "White-winged Scoter": "wwscot", "Lesser Black-backed Gull": "lbbgul", "Iceland Gull": "icegul",
+            "Black Tern": "blkter", "Arctic Tern": "arcter", "Wild Turkey": "wiltur", "Black-billed Cuckoo": "bibcuc",
+            "Broad-winged Hawk": "brwhaw", "Willet (Eastern)": "willet1", "Willet": "willet1", "Greater Yellowlegs": "greyel",
+            "Least Tern": "leater1", "Common Tern": "comter", "Glossy Ibis": "gloibi", "Eastern Whip-poor-will": "easwpw1",
+            "Turkey Vulture": "turvul", "Red-shouldered Hawk": "reshaw", "Ruby-throated Hummingbird": "rthhum", "Willow Flycatcher": "wilfly",
+            "Swallow-tailed Kite": "stkite", "Cooper's Hawk": "coohaw", "Bald Eagle": "baleag", "Barred Owl": "barowl", "Ruby-crowned Kinglet": "ruckin"
         };
-
-        function getEBirdUrl(birdName) {
-            const cleanName = birdName.trim();
-            const code = EBIRD_CODE_MAP[cleanName];
-            if (code) {
-                return `https://ebird.org/species/${code}`;
-            }
-            return `https://ebird.org/search?q=${encodeURIComponent(cleanName)}`;
-        }
-
-        function parseTSV(text) {
-            const lines = text.trim().split('\n');
-            const result = [];
-            let currentLoc = "";
-            let currentCoords = "";
-
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                if (i === 0 && line.toLowerCase().includes('location name')) continue; 
-                const cols = line.split('\t');
-                if (cols.length < 3) continue;
-
-                let loc = cols[0].trim();
-                let coords = cols[1].trim();
-                const bird = cols[2].trim();
-                const rare = cols[3]?.trim() || "N";
-                const date = cols[4]?.trim() || "";
-
-                if (loc !== "") {
-                    currentLoc = loc;
-                    currentCoords = coords;
-                }
-
-                result.push({
-                    id: `${currentLoc}-${bird}-${i}`,
-                    locationName: currentLoc,
-                    coordinates: currentCoords,
-                    bird: bird,
-                    rare: rare,
-                    lastReported: date
-                });
-            }
-            return result;
-        }
-
-        function recordsToTSV(records) {
-            const header = "Location Name\tCoordinates\tBird\tRare (Y/N)\tLast Reported";
-            let lastLoc = "";
-            let lastCoords = "";
-            const rows = records.map(r => {
-                let locCol = "";
-                let coordCol = "";
-                if (r.locationName !== lastLoc || r.coordinates !== lastCoords) {
-                    locCol = r.locationName;
-                    coordCol = r.coordinates;
-                    lastLoc = r.locationName;
-                    lastCoords = r.coordinates;
-                }
-                return `${locCol}\t${coordCol}\t${r.bird}\t${r.rare}\t${r.lastReported}`;
-            });
-            return [header, ...rows].join('\n');
-        }
-
-        function parseCSVLine(line) {
-            const result = [];
-            let current = '';
-            let inQuotes = false;
-            for (let i = 0; i < line.length; i++) {
-                const char = line[i];
-                if (char === '"' || char === "'") {
-                    inQuotes = !inQuotes;
-                } else if (char === ',' && !inQuotes) {
-                    result.push(current.trim().replace(/^["']|["']$/g, ''));
-                    current = '';
-                } else {
-                    current += char;
-                }
-            }
-            result.push(current.trim().replace(/^["']|["']$/g, ''));
-            return result;
-        }
 
         function App() {
             const [rawData, setRawData] = useState(INITIAL_RAW_DATA);
-            const [pastedData, setPastedData] = useState('');
-            const [showSyncPanel, setShowSyncPanel] = useState(false);
-            
-            // Life List state
-            const [lifeListSet, setLifeListSpecies] = useState(new Set());
-            const [lifeListFileName, setLifeListFileName] = useState('');
-            const [manualSeenStates, setManualSeenStates] = useState({});
-
+            const [manualSeen, setManualSeen] = useState({});
             const [searchQuery, setSearchQuery] = useState('');
-            const [statusFilter, setStatusFilter] = useState('ALL'); 
+            const [statusFilter, setStatusFilter] = useState('ALL');
             const [selectedLocation, setSelectedLocation] = useState('ALL');
             const [selectedBird, setSelectedBird] = useState('ALL');
-            const [sortBy, setSortBy] = useState('bird');
-            const [toastMsg, setToastMsg] = useState('');
-
-            const [deferredPrompt, setDeferredPrompt] = useState(null);
-            const [isInstallable, setIsInstallable] = useState(false);
-
-            const [basemapStyle, setBasemapStyle] = useState('dark');
-            const [mapReady, setMapReady] = useState(false);
+            const [mapStyle, setMapStyle] = useState('dark');
             const mapContainerRef = useRef(null);
             const mapInstance = useRef(null);
-            const markerLayerGroup = useRef(null);
-
-            const [isAddOpen, setIsAddOpen] = useState(false);
-            const [newBird, setNewBird] = useState({
-                locationName: '', coordinates: '', bird: '', rare: 'N', lastReported: 'Thursday, July 9, 2026'
-            });
-
-            useEffect(() => {
-                window.addEventListener('beforeinstallprompt', (e) => {
-                    e.preventDefault();
-                    setDeferredPrompt(e);
-                    setIsInstallable(true);
-                });
-            }, []);
-
-            const handleInstallApp = async () => {
-                if (!deferredPrompt) return;
-                deferredPrompt.prompt();
-                const { outcome } = await deferredPrompt.userChoice;
-                if (outcome === 'accepted') setDeferredPrompt(null);
-            };
 
             const birdRecords = useMemo(() => {
-                try {
-                    const rawRecords = parseTSV(rawData);
-                    return rawRecords.map(r => {
-                        const isSeen = lifeListSet.has(r.bird.toLowerCase()) || !!manualSeenStates[r.bird.toLowerCase()];
-                        return { ...r, seen: isSeen ? 'Y' : 'N' };
+                const lines = rawData.trim().split('\n');
+                const result = [];
+                let currentLoc = "";
+                let currentCoords = "";
+                lines.forEach((line, i) => {
+                    if (i === 0 && line.toLowerCase().includes('location name')) return;
+                    const cols = line.split('\t');
+                    if (cols.length < 3) return;
+                    if (cols[0].trim() !== "") { currentLoc = cols[0].trim(); currentCoords = cols[1].trim(); }
+                    result.push({
+                        id: `${currentLoc}-${cols[2].trim()}-${i}`,
+                        locationName: currentLoc,
+                        coordinates: currentCoords,
+                        bird: cols[2].trim(),
+                        rare: cols[3]?.trim() || 'N'
                     });
-                } catch (e) { return []; }
-            }, [rawData, lifeListSet, manualSeenStates]);
-
-            const stats = useMemo(() => {
-                const total = birdRecords.length;
-                const seenCount = birdRecords.filter(r => r.seen === 'Y').length;
-                const rareCount = birdRecords.filter(r => r.rare === 'Y').length;
-                const priorityCount = birdRecords.filter(r => r.rare === 'Y' && r.seen === 'N').length;
-                return { total, seenCount, unseenCount: total - seenCount, seenPercentage: total > 0 ? Math.round((seenCount / total) * 100) : 0, rareCount, priorityCount };
-            }, [birdRecords]);
-
-            const toggleSeen = (birdName) => {
-                const key = birdName.toLowerCase();
-                const isCurrentlySeen = lifeListSet.has(key) || !!manualSeenStates[key];
-                setManualSeenStates(prev => ({ ...prev, [key]: !isCurrentlySeen }));
-                showToast(`${birdName} seen status updated.`);
-            };
-
-            const deleteRecord = (id) => {
-                const updated = birdRecords.filter(rec => rec.id !== id);
-                setRawData(recordsToTSV(updated));
-                showToast("Entry deleted.");
-            };
+                });
+                return result;
+            }, [rawData]);
 
             const filteredRecords = useMemo(() => {
                 return birdRecords.filter(r => {
                     const matchesSearch = r.bird.toLowerCase().includes(searchQuery.toLowerCase()) || r.locationName.toLowerCase().includes(searchQuery.toLowerCase());
-                    const matchesLocation = selectedLocation === 'ALL' || r.locationName === selectedLocation;
-                    const matchesBirdSelection = selectedBird === 'ALL' || r.bird === selectedBird;
-
-                    if (!matchesSearch || !matchesLocation || !matchesBirdSelection) return false;
-
-                    if (statusFilter === 'SEEN') return r.seen === 'Y';
-                    if (statusFilter === 'UNSEEN') return r.seen === 'N';
-                    if (statusFilter === 'RARE') return r.rare === 'Y';
-                    if (statusFilter === 'PRIORITY') return r.rare === 'Y' && r.seen === 'N';
-                    return true;
+                    const matchesLoc = selectedLocation === 'ALL' || r.locationName === selectedLocation;
+                    const matchesBird = selectedBird === 'ALL' || r.bird === selectedBird;
+                    const seen = !!manualSeen[r.bird.toLowerCase()];
+                    if (statusFilter === 'SEEN' && !seen) return false;
+                    if (statusFilter === 'UNSEEN' && seen) return false;
+                    return matchesSearch && matchesLoc && matchesBird;
                 });
-            }, [birdRecords, searchQuery, statusFilter, selectedLocation, selectedBird, sortBy]);
+            }, [birdRecords, searchQuery, statusFilter, selectedLocation, selectedBird, manualSeen]);
 
-            const mapLocations = useMemo(() => {
-                const locMap = {};
-                filteredRecords.forEach(r => {
-                    if (!locMap[r.locationName]) locMap[r.locationName] = { name: r.locationName, coords: r.coordinates, total: 0, seen: 0, unseenRares: 0, isActive: true };
-                    const item = locMap[r.locationName];
-                    item.total += 1;
-                    if (r.seen === 'Y') item.seen += 1;
-                    if (r.rare === 'Y' && r.seen === 'N') item.unseenRares += 1;
-                });
-                return Object.values(locMap);
-            }, [filteredRecords]);
-
-            // Map init
             useEffect(() => {
-                if (!mapContainerRef.current || mapInstance.current) return;
-                const map = L.map(mapContainerRef.current, { zoomControl: false }).setView([41.80, -70.30], 10);
-                mapInstance.current = map;
-                markerLayerGroup.current = L.layerGroup().addTo(map);
-                L.control.zoom({ position: 'topright' }).addTo(map);
-                setMapReady(true);
+                if (!mapContainerRef.current) return;
+                mapInstance.current = L.map(mapContainerRef.current).setView([41.80, -70.30], 10);
+                return () => mapInstance.current.remove();
             }, []);
 
-            // Basemap style handler
             useEffect(() => {
-                if (!mapInstance.current || !mapReady) return;
+                if (!mapInstance.current) return;
                 mapInstance.current.eachLayer(l => { if (l instanceof L.TileLayer) mapInstance.current.removeLayer(l); });
-                let url = basemapStyle === 'streets' ? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png' : basemapStyle === 'satellite' ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+                const url = mapStyle === 'streets' ? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png' : mapStyle === 'satellite' ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
                 L.tileLayer(url).addTo(mapInstance.current);
-            }, [basemapStyle, mapReady]);
+            }, [mapStyle]);
 
-            // Marker rendering
             useEffect(() => {
-                if (!mapInstance.current || !markerLayerGroup.current || !mapReady) return;
-                markerLayerGroup.current.clearLayers();
-                mapLocations.forEach(loc => {
-                    if (!loc.coords) return;
-                    const [lat, lng] = loc.coords.split(',').map(Number);
-                    const marker = L.circleMarker([lat, lng], { radius: 8, fillColor: loc.unseenRares > 0 ? '#f59e0b' : '#10b981', fillOpacity: 0.8, color: '#fff', weight: 1 }).addTo(markerLayerGroup.current);
-                    marker.bindPopup(`<h4 class="font-bold">${loc.name}</h4><p>${loc.seen}/${loc.total} seen</p>`).on('click', () => setSelectedLocation(loc.name));
+                if (!mapInstance.current) return;
+                mapInstance.current.eachLayer(l => { if (l instanceof L.CircleMarker) mapInstance.current.removeLayer(l); });
+                const locs = {};
+                filteredRecords.forEach(r => {
+                    if (!locs[r.locationName]) {
+                        const coords = r.coordinates.split(',').map(Number);
+                        locs[r.locationName] = L.circleMarker(coords, { radius: 8, color: '#10b981', fillOpacity: 0.7 }).addTo(mapInstance.current);
+                        locs[r.locationName].bindPopup(r.locationName).on('click', () => setSelectedLocation(r.locationName));
+                    }
                 });
-            }, [mapLocations, mapReady]);
+            }, [filteredRecords]);
 
             return (
-                <div className="flex flex-col min-h-screen bg-slate-950 text-slate-100">
-                    <header className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900 sticky top-0 z-50">
-                        <div>
-                            <h1 className="text-lg font-black text-teal-400">CAPE COD BIRD SIGHTINGS</h1>
-                            <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Interactive Cape Code Bird Sighting Portal</p>
-                        </div>
-                        <div className="flex gap-2">
-                             {isInstallable && <button onClick={handleInstallApp} className="bg-emerald-500 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-bold">Install</button>}
-                            <button onClick={() => setIsAddOpen(true)} className="bg-teal-500 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-bold">+</button>
-                        </div>
+                <div className="bg-slate-950 text-slate-100 min-h-screen p-4 md:p-8">
+                    <header className="mb-8">
+                        <h1 className="text-3xl font-black text-teal-400">CAPE COD BIRD SIGHTINGS</h1>
+                        <p className="text-slate-400">Interactive Cape Code Bird Sighting Portal</p>
                     </header>
-
-                    <main className="p-4 space-y-6">
-                        <section className="bg-slate-900 rounded-2xl h-64 overflow-hidden shadow-inner border border-slate-800 relative">
-                            <div ref={mapContainerRef} className="w-full h-full" />
-                        </section>
-
-                        <div className="bg-slate-900 p-4 rounded-2xl space-y-4">
-                            <input type="text" placeholder="Search..." onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm" />
-                            <div className="flex gap-2 overflow-x-auto pb-2">
-                                {['ALL', 'SEEN', 'UNSEEN', 'RARE', 'PRIORITY'].map(f => (
-                                    <button key={f} onClick={() => setStatusFilter(f)} className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap ${statusFilter === f ? 'bg-teal-500 text-slate-950' : 'bg-slate-800'}`}>{f}</button>
-                                ))}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div className="lg:col-span-2 space-y-6">
+                            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800">
+                                <h2 className="text-lg font-bold mb-3">Sighting Map</h2>
+                                <div ref={mapContainerRef} className="h-64 w-full rounded-xl" />
+                            </div>
+                            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800">
+                                <input className="w-full bg-slate-950 p-3 rounded-lg border border-slate-700" placeholder="Search..." onChange={(e) => setSearchQuery(e.target.value)} />
+                                <div className="mt-4 grid grid-cols-2 gap-2">
+                                    {['ALL', 'SEEN', 'UNSEEN'].map(f => <button key={f} onClick={() => setStatusFilter(f)} className={`p-2 rounded-lg font-bold ${statusFilter === f ? 'bg-teal-500' : 'bg-slate-800'}`}>{f}</button>)}
+                                </div>
                             </div>
                         </div>
-
-                        {filteredRecords.map(r => (
-                            <div key={r.id} onClick={() => setSelectedBird(r.bird === selectedBird ? 'ALL' : r.bird)} className={`p-4 rounded-xl border ${selectedBird === r.bird ? 'border-teal-500' : 'border-slate-800'} flex justify-between items-center`}>
-                                <div className="flex items-center gap-3">
-                                    <BirdThumbnail birdName={r.bird} />
-                                    <div>
-                                        <div className="font-bold">{r.bird}</div>
-                                        <div className="text-xs text-slate-400">{r.locationName}</div>
+                        <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 max-h-[800px] overflow-y-auto">
+                            <h2 className="text-lg font-bold mb-4">Species Ledger</h2>
+                            {filteredRecords.map(r => (
+                                <div key={r.id} onClick={() => setSelectedBird(r.bird)} className="p-3 mb-2 bg-slate-950 rounded-lg flex items-center justify-between cursor-pointer hover:border-teal-500 border border-transparent">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 bg-slate-800 rounded-lg overflow-hidden shrink-0"><img src={`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(r.bird)}`.thumbnail?.source} onError={(e) => e.target.parentElement.classList.add('hidden')}/></div>
+                                        <div><div className="font-bold">{r.bird}</div><a href={getEBirdUrl(r.bird)} target="_blank" className="text-teal-400 text-xs">eBird Details</a></div>
                                     </div>
+                                    <button onClick={(e) => { e.stopPropagation(); setManualSeen(prev => ({...prev, [r.bird.toLowerCase()]: !prev[r.bird.toLowerCase()]})); }} className={`px-2 py-1 rounded text-xs ${manualSeen[r.bird.toLowerCase()] ? 'bg-teal-500' : 'bg-slate-800'}`}>{manualSeen[r.bird.toLowerCase()] ? 'Seen' : 'Mark'}</button>
                                 </div>
-                                <div className="flex gap-2">
-                                    <a href={getEBirdUrl(r.bird)} target="_blank" className="bg-slate-800 px-3 py-1 rounded-lg text-xs font-bold">eBird ↗</a>
-                                    <button onClick={(e) => { e.stopPropagation(); toggleSeen(r.bird); }} className={`px-3 py-1 rounded-lg text-xs font-bold ${r.seen === 'Y' ? 'bg-teal-500/20 text-teal-300' : 'bg-slate-800'}`}>
-                                        {r.seen === 'Y' ? '✓ Seen' : 'Mark'}
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
-                    </main>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             );
-        }
-
-        function BirdThumbnail({ birdName }) {
-            const [imgUrl, setImgUrl] = useState(null);
-            useEffect(() => {
-                fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(birdName)}`)
-                    .then(r => r.json())
-                    .then(data => { if(data.thumbnail) setImgUrl(data.thumbnail.source); })
-                    .catch(() => {});
-            }, [birdName]);
-            return imgUrl ? <img src={imgUrl} className="w-12 h-12 rounded-lg object-cover" /> : <div className="w-12 h-12 bg-slate-800 rounded-lg" />;
         }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
