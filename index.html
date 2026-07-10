@@ -518,15 +518,16 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     return true;
                 }
                 // "Last Reported" is stored as a calendar date only (no time-of-day — see
-                // formatLongDate), so an evening sighting parses to that day's midnight. Comparing
-                // against a precise "now minus N hours" cutoff would unfairly discount anything
-                // reported later in the day (it could lose up to ~23 hours of "freshness"), which
-                // made "Last 24h" show nothing even when today's sightings existed. Compare by
-                // calendar day instead — the actual precision this data has: "24h" = today,
-                // "7d"/"30d" = today plus the preceding N-1 calendar days.
+                // formatLongDate). A true rolling 24-hour window, at any point in the day, always
+                // spans TWO calendar dates (e.g. checked at 9am, "last 24h" covers back to 9am
+                // yesterday — touching both today's and yesterday's date). Restricting "Last 24h"
+                // to today's date only was stricter than that and could show nothing even with
+                // genuinely recent sightings, if the latest one happened to land on yesterday's
+                // date. So: "24h" = today + yesterday, "7d"/"30d" = today plus the preceding N-1
+                // calendar days — the most correct interpretation this data's precision allows.
                 const now = new Date();
                 const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                const daysBack = dateRangeFilter === '24H' ? 0 : dateRangeFilter === '7D' ? 6 : 29;
+                const daysBack = dateRangeFilter === '24H' ? 1 : dateRangeFilter === '7D' ? 6 : 29;
                 const cutoff = new Date(startOfToday);
                 cutoff.setDate(cutoff.getDate() - daysBack);
                 return recordDate >= cutoff;
@@ -636,13 +637,15 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             const dateDiagnostics = useMemo(() => {
                 const now = new Date();
                 const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const yesterday = new Date(startOfToday); yesterday.setDate(yesterday.getDate() - 1);
                 const weekAgo = new Date(startOfToday); weekAgo.setDate(weekAgo.getDate() - 6);
                 const monthAgo = new Date(startOfToday); monthAgo.setDate(monthAgo.getDate() - 29);
-                const counts = { today: 0, week: 0, month: 0, unparseable: 0, sample: [] };
+                const counts = { today: 0, last24h: 0, week: 0, month: 0, unparseable: 0, sample: [] };
                 enrichedRecords.forEach(r => {
                     const d = parseFlexibleDate(r.lastReported);
                     if (isNaN(d)) { counts.unparseable++; return; }
                     if (d >= startOfToday) counts.today++;
+                    if (d >= yesterday) counts.last24h++;
                     if (d >= weekAgo) counts.week++;
                     if (d >= monthAgo) counts.month++;
                     if (counts.sample.length < 3) counts.sample.push(r.lastReported);
@@ -1778,13 +1781,13 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                         <div className="flex flex-wrap items-center gap-1.5">
                                             <span className="text-xs text-slate-400 mr-0.5">Reported:</span>
                                             {[
-                                                { id: 'ALL', label: 'Any time' },
-                                                { id: '24H', label: 'Last 24h' },
-                                                { id: '7D', label: 'Last 7d' },
-                                                { id: '30D', label: 'Last 30d' },
-                                                { id: 'CUSTOM', label: 'Custom' }
+                                                { id: 'ALL', label: 'Any time', title: null },
+                                                { id: '24H', label: 'Last 24h', title: 'Today and yesterday (this app only stores a date, not a time, so "24h" is approximated as the last 2 calendar days)' },
+                                                { id: '7D', label: 'Last 7d', title: 'Today plus the previous 6 calendar days' },
+                                                { id: '30D', label: 'Last 30d', title: 'Today plus the previous 29 calendar days' },
+                                                { id: 'CUSTOM', label: 'Custom', title: null }
                                             ].map(opt => (
-                                                <button key={opt.id} onClick={() => setDateRangeFilter(opt.id)} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${dateRangeFilter === opt.id ? 'bg-teal-500 text-slate-950' : 'bg-slate-950 text-slate-400 hover:text-white'}`}>{opt.label}</button>
+                                                <button key={opt.id} onClick={() => setDateRangeFilter(opt.id)} title={opt.title} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${dateRangeFilter === opt.id ? 'bg-teal-500 text-slate-950' : 'bg-slate-950 text-slate-400 hover:text-white'}`}>{opt.label}</button>
                                             ))}
                                             {dateRangeFilter === 'CUSTOM' && (
                                                 <div className="flex items-center gap-1.5 pl-1">
@@ -1797,7 +1800,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                         <button onClick={handleExportCSV} title="Export current filtered list as CSV" className="bg-slate-950 border border-slate-800 hover:border-teal-500 hover:text-teal-400 text-slate-400 px-3 py-1 rounded-lg text-[10px] font-bold transition">⬇ Export CSV</button>
                                     </div>
                                     <div className="text-[9px] text-slate-500 font-mono pt-0.5">
-                                        App considers "today" to be {dateDiagnostics.todayLabel} · matching: {dateDiagnostics.today} today, {dateDiagnostics.week} this week, {dateDiagnostics.month} this month{dateDiagnostics.unparseable > 0 ? `, ${dateDiagnostics.unparseable} unparseable` : ''} (of {enrichedRecords.length} total)
+                                        App considers "today" to be {dateDiagnostics.todayLabel} · matching: {dateDiagnostics.today} today, {dateDiagnostics.last24h} in "Last 24h" (today+yesterday), {dateDiagnostics.week} this week, {dateDiagnostics.month} this month{dateDiagnostics.unparseable > 0 ? `, ${dateDiagnostics.unparseable} unparseable` : ''} (of {enrichedRecords.length} total)
                                         {dateDiagnostics.sample.length > 0 && ` — sample dates: ${dateDiagnostics.sample.join(' | ')}`}
                                     </div>
                                     
