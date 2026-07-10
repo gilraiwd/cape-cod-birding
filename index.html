@@ -707,12 +707,17 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 });
             }, [filteredRecords, enrichedRecords]);
 
-            // Leaflet JS CDN Injector & Map Booting Pipeline
+            // Map Booting Pipeline. Leaflet + the markercluster plugin are both loaded
+            // synchronously via <script> tags in <head>, so window.L (with L.markerClusterGroup
+            // already attached) is guaranteed ready before this inline script runs — no need to
+            // inject/await them here. (A previous version dynamically re-injected leaflet.js as a
+            // defensive fallback; that actually broke clustering, since re-running leaflet.js
+            // replaces window.L with a fresh object that the markercluster plugin never touched.)
             useEffect(() => {
-                if (typeof window === 'undefined') return;
-                
+                if (typeof window === 'undefined' || !window.L) return;
+
                 const initMap = () => {
-                    if (!mapContainerRef.current) return;
+                    if (!mapContainerRef.current || mapInstance.current) return;
                     const map = L.map(mapContainerRef.current, { zoomControl: false }).setView([41.80, -70.30], 10);
                     mapInstance.current = map;
                     markerLayerGroup.current = L.markerClusterGroup({
@@ -735,32 +740,11 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                         }
                     }).addTo(map);
                     L.control.zoom({ position: 'topright' }).addTo(map);
+                    setLeafletLoaded(true);
                     setMapReady(true);
                 };
 
-                if (!document.getElementById('leaflet-css-pkg')) {
-                    const link = document.createElement('link');
-                    link.id = 'leaflet-css-pkg';
-                    link.rel = 'stylesheet';
-                    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-                    document.head.appendChild(link);
-                }
-
-                if (!document.getElementById('leaflet-js-pkg')) {
-                    const script = document.createElement('script');
-                    script.id = 'leaflet-js-pkg';
-                    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-                    script.onload = () => {
-                        setLeafletLoaded(true);
-                        initMap();
-                    };
-                    document.head.appendChild(script);
-                } else {
-                    setLeafletLoaded(true);
-                    if (window.L && !mapInstance.current) {
-                        initMap();
-                    }
-                }
+                initMap();
 
                 return () => {
                     if (mapInstance.current) {
@@ -1050,10 +1034,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             };
 
             const deleteLifeList = (id) => {
-                if (Object.keys(savedLifeLists).length <= 1) {
-                    showToast("Can't delete your only life list.");
-                    return;
-                }
+                const list = savedLifeLists[id];
                 setSavedLifeLists(prev => {
                     const next = { ...prev };
                     delete next[id];
@@ -1061,8 +1042,36 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 });
                 if (activeLifeListId === id) {
                     const remaining = Object.keys(savedLifeLists).filter(k => k !== id);
-                    setActiveLifeListId(remaining[0]);
+                    if (remaining.length > 0) {
+                        setActiveLifeListId(remaining[0]);
+                    } else {
+                        // Deleted the last list — recreate a default one so there's always
+                        // something to compare against, rather than leaving nothing active.
+                        setSavedLifeLists({ default: { label: 'My Life List', names: DEFAULT_LIFE_LIST } });
+                        setActiveLifeListId('default');
+                    }
                 }
+                showToast(`Deleted "${list?.label || id}".`);
+            };
+
+            const [editingListId, setEditingListId] = useState(null);
+            const [editingLabelDraft, setEditingLabelDraft] = useState('');
+
+            const startRenameLifeList = (id, currentLabel) => {
+                setEditingListId(id);
+                setEditingLabelDraft(currentLabel);
+            };
+
+            const saveRenameLifeList = () => {
+                const trimmed = editingLabelDraft.trim();
+                if (trimmed && editingListId) {
+                    setSavedLifeLists(prev => ({
+                        ...prev,
+                        [editingListId]: { ...prev[editingListId], label: trimmed }
+                    }));
+                }
+                setEditingListId(null);
+                setEditingLabelDraft('');
             };
 
             // --- Import: sighting report (.docx rare-alert export, or plain .txt/.tsv) -------
@@ -1272,11 +1281,27 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                         <div className="space-y-1 pt-1">
                                             {Object.entries(savedLifeLists).map(([id, list]) => (
                                                 <div key={id} className={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[10px] border ${id === activeLifeListId ? 'bg-teal-950/40 border-teal-500/40' : 'bg-slate-900 border-slate-800'}`}>
-                                                    <button onClick={() => setActiveLifeListId(id)} className={`text-left flex-1 truncate font-bold ${id === activeLifeListId ? 'text-teal-400' : 'text-slate-300 hover:text-white'}`}>
-                                                        {id === activeLifeListId ? '● ' : '○ '}{list.label} <span className="text-slate-500 font-normal">({list.names.length})</span>
-                                                    </button>
-                                                    {Object.keys(savedLifeLists).length > 1 && (
-                                                        <button onClick={() => deleteLifeList(id)} className="text-slate-500 hover:text-rose-400 font-bold shrink-0">✕</button>
+                                                    {editingListId === id ? (
+                                                        <div className="flex items-center gap-1.5 flex-1">
+                                                            <input
+                                                                type="text"
+                                                                autoFocus
+                                                                value={editingLabelDraft}
+                                                                onChange={(e) => setEditingLabelDraft(e.target.value)}
+                                                                onKeyDown={(e) => { if (e.key === 'Enter') saveRenameLifeList(); if (e.key === 'Escape') setEditingListId(null); }}
+                                                                className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-100 focus:outline-none"
+                                                            />
+                                                            <button onClick={saveRenameLifeList} className="text-teal-400 hover:text-teal-300 font-bold shrink-0">✓</button>
+                                                            <button onClick={() => setEditingListId(null)} className="text-slate-500 hover:text-slate-300 font-bold shrink-0">✕</button>
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            <button onClick={() => setActiveLifeListId(id)} className={`text-left flex-1 truncate font-bold ${id === activeLifeListId ? 'text-teal-400' : 'text-slate-300 hover:text-white'}`}>
+                                                                {id === activeLifeListId ? '● ' : '○ '}{list.label} <span className="text-slate-500 font-normal">({list.names.length})</span>
+                                                            </button>
+                                                            <button onClick={() => startRenameLifeList(id, list.label)} title="Rename" className="text-slate-500 hover:text-teal-400 font-bold shrink-0">✎</button>
+                                                            <button onClick={() => { if (confirm(`Delete life list "${list.label}"?`)) deleteLifeList(id); }} title="Delete" className="text-slate-500 hover:text-rose-400 font-bold shrink-0">✕</button>
+                                                        </>
                                                     )}
                                                 </div>
                                             ))}
@@ -1382,8 +1407,8 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                     <div className="absolute bottom-3 left-3 z-[500] bg-slate-950/90 border border-slate-800 rounded-xl px-3 py-2.5 text-[10px] space-y-1.5 backdrop-blur-sm">
                                         <div className="font-bold text-slate-300 uppercase tracking-wider text-[9px] mb-1.5">Legend</div>
                                         <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#f59e0b' }} /><span className="text-slate-400">Unseen rare target here</span></div>
-                                        <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#10b981' }} /><span className="text-slate-400">Fully seen</span></div>
                                         <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#38bdf8' }} /><span className="text-slate-400">Partially seen</span></div>
+                                        <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#10b981' }} /><span className="text-slate-400">Fully seen</span></div>
                                         <div className="flex items-center gap-2 pt-1 border-t border-slate-800 mt-1.5">
                                             <span className="flex items-center gap-0.5">
                                                 <span className="w-1.5 h-1.5 rounded-full bg-slate-500 inline-block" />
