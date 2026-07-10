@@ -994,20 +994,27 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 setTimeout(() => setToastMsg(''), 3000);
             };
 
-            // "Home" — resets the map view. Fits bounds to whatever hotspots are currently
-            // active (matching the present filters) rather than a hardcoded view, so it stays
-            // useful after filtering down to a region/date range; falls back to the original
-            // full-Cape default view if nothing is active to fit to. Also clears a single-hotspot
-            // focus, since "home" implies backing out of that.
+            // "Home" — resets the map view to fit whichever region is currently selected (or
+            // every hotspot, if "All Regions" is selected). Deliberately computed from
+            // enrichedRecords + selectedRegion directly rather than the filtered/mapLocations
+            // pipeline: that pipeline also folds in search text, status tab, date range, and a
+            // single-hotspot focus, which made "Home" zoom to whatever narrow slice happened to
+            // be on screen instead of the region as a whole — and reading it in the same tick as
+            // resetting selectedLocation would've used a stale value anyway, since state updates
+            // aren't applied synchronously.
             const handleGoHome = () => {
                 if (!mapInstance.current) return;
                 setSelectedLocation('ALL');
-                const bounds = mapLocations
-                    .filter(l => l.isActive && l.coords)
-                    .map(l => l.coords.split(',').map(parseFloat))
+                const regionRecords = selectedRegion === 'ALL'
+                    ? enrichedRecords
+                    : enrichedRecords.filter(r => r.region === selectedRegion);
+                const coords = regionRecords
+                    .map(r => r.coordinates)
+                    .filter(Boolean)
+                    .map(c => c.split(',').map(parseFloat))
                     .filter(([lat, lng]) => !isNaN(lat) && !isNaN(lng));
-                if (bounds.length > 0) {
-                    mapInstance.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 13 });
+                if (coords.length > 0) {
+                    mapInstance.current.fitBounds(coords, { padding: [40, 40], maxZoom: 13 });
                 } else {
                     mapInstance.current.setView([41.80, -70.30], 10);
                 }
@@ -1079,7 +1086,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     coordinates: (o.lat != null && o.lng != null) ? `${o.lat}, ${o.lng}` : '',
                     bird: o.comName,
                     rare: notableKeys.has(`${o.locId}|${o.speciesCode}`) ? 'Y' : 'N',
-                    lastReported: formatLongDate(new Date((o.obsDt || '').replace(' ', 'T'))),
+                    lastReported: formatLongDate(parseFlexibleDate(o.obsDt)),
                     region: regionCode
                 });
                 return [...recent, ...notable].filter(o => o.comName && o.locName).map(toEntry);
@@ -2017,6 +2024,19 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             return isNaN(dt) ? '' : dt.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
         }
 
+        // Parses a "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" string as LOCAL time, always. Bare
+        // "YYYY-MM-DD" strings are parsed as UTC midnight per the JS spec — for anyone west of
+        // UTC (all of the US), that rolls back to the *previous* calendar day once rendered in
+        // local time, so a sighting truly reported "today" could get silently mislabeled
+        // "yesterday" and vanish from a "Last 24h" filter. Appending a bare time component
+        // forces local-time parsing instead, regardless of whether the source string had one.
+        function parseFlexibleDate(str) {
+            if (!str) return new Date(NaN);
+            const hasTime = /\d{1,2}:\d{2}/.test(str);
+            const normalized = str.trim().replace(' ', 'T');
+            return new Date(hasTime ? normalized : `${normalized}T00:00:00`);
+        }
+
         // Parses an uploaded eBird life list CSV export and returns a sorted array of unique
         // Common Names. Handles quoted fields (commas inside quotes) per standard CSV escaping.
         function parseLifeListCSV(text) {
@@ -2069,7 +2089,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 if (!m) continue;
                 const [, bird, location, lat, lng, dateStr] = m;
                 const key = `${location.trim().toLowerCase()}|${bird.trim().toLowerCase()}`;
-                const dt = new Date(dateStr.replace(' ', 'T'));
+                const dt = parseFlexibleDate(dateStr);
                 const existing = byKey.get(key);
                 if (!existing || dt > existing.dt) {
                     byKey.set(key, {
