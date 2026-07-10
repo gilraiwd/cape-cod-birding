@@ -21,6 +21,11 @@
     <!-- Leaflet GIS Map CDN -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+    <!-- Leaflet.markercluster (zoom-dependent hotspot clustering) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
     
     <!-- React & Babel Standalone CDNs -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -48,6 +53,20 @@
         .leaflet-container {
             touch-action: none;
         }
+        /* Dark-theme cluster bubbles, colored by worst-case status inside the cluster */
+        .cbc-cluster-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 9999px;
+            color: #020617;
+            font-weight: 800;
+            font-size: 12px;
+            box-shadow: 0 0 0 3px rgba(2, 6, 23, 0.85);
+        }
+        .cbc-cluster-amber { background: #f59e0b; }
+        .cbc-cluster-blue { background: #38bdf8; }
+        .cbc-cluster-green { background: #10b981; }
     </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen">
@@ -388,20 +407,34 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             const [showSyncPanel, setShowSyncPanel] = useState(false);
             const [showImportPanel, setShowImportPanel] = useState(false);
 
-            // eBird life list (Common Names) used to auto-derive Seen status, plus manual
-            // per-bird overrides that persist even when the TSV/report data is re-imported.
-            const [lifeList, setLifeList] = useState(() => storageGet('cbc_lifeList', DEFAULT_LIFE_LIST));
+            // Multiple named eBird life lists (Common Names), so this site can be shared — a
+            // friend uploads their own life list export and switches to it to see their own
+            // gaps, without anyone's data overwriting anyone else's. Seeded with the original
+            // life list under "My Life List" the first time this loads (backward-compatible
+            // with the previous single-life-list version of this app).
+            const [savedLifeLists, setSavedLifeLists] = useState(() => {
+                const existing = storageGet('cbc_savedLifeLists', null);
+                if (existing) return existing;
+                const legacyList = storageGet('cbc_lifeList', DEFAULT_LIFE_LIST);
+                return { default: { label: 'My Life List', names: legacyList } };
+            });
+            const [activeLifeListId, setActiveLifeListId] = useState(() => storageGet('cbc_activeLifeListId', 'default'));
+            const [newLifeListLabel, setNewLifeListLabel] = useState('');
+            const lifeList = savedLifeLists[activeLifeListId]?.names || DEFAULT_LIFE_LIST;
+
             const [seenOverrides, setSeenOverrides] = useState(() => storageGet('cbc_seenOverrides', {}));
             const [hiddenLocations, setHiddenLocations] = useState(() => storageGet('cbc_hiddenLocations', []));
             const lifeListFileRef = useRef(null);
             const reportFileRef = useRef(null);
 
             useEffect(() => { storageSet('cbc_rawData', rawData); }, [rawData]);
-            useEffect(() => { storageSet('cbc_lifeList', lifeList); }, [lifeList]);
+            useEffect(() => { storageSet('cbc_savedLifeLists', savedLifeLists); }, [savedLifeLists]);
+            useEffect(() => { storageSet('cbc_activeLifeListId', activeLifeListId); }, [activeLifeListId]);
             useEffect(() => { storageSet('cbc_seenOverrides', seenOverrides); }, [seenOverrides]);
             useEffect(() => { storageSet('cbc_hiddenLocations', hiddenLocations); }, [hiddenLocations]);
 
             const lifeListSet = useMemo(() => new Set(lifeList.map(normalizeBirdName)), [lifeList]);
+
 
             // --- eBird API integration (species codes + daily region sightings) --------------
             // The key is seeded with the one you gave us so the app works immediately; it's
@@ -409,7 +442,8 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             // any time in Settings. Note this file will contain that key in plain text — treat
             // it like any personal credential and don't publish/share this file publicly.
             const [ebirdApiKey, setEbirdApiKey] = useState(() => storageGet('cbc_ebirdApiKey', 'l531bs6l4t92'));
-            const [ebirdRegion, setEbirdRegion] = useState(() => storageGet('cbc_ebirdRegion', 'US-MA-001')); // Barnstable County, MA
+            const [ebirdRegions, setEbirdRegions] = useState(() => storageGet('cbc_ebirdRegions', ['US-MA-001'])); // Barnstable County, MA
+            const [newRegionInput, setNewRegionInput] = useState('');
             const [taxonomyMap, setTaxonomyMap] = useState(() => storageGet('cbc_taxonomyMap', {}));
             const [taxonomySyncedAt, setTaxonomySyncedAt] = useState(() => storageGet('cbc_taxonomySyncedAt', null));
             const [ebirdSyncedAt, setEbirdSyncedAt] = useState(() => storageGet('cbc_ebirdSyncedAt', null));
@@ -418,7 +452,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             const [showSettingsPanel, setShowSettingsPanel] = useState(false);
 
             useEffect(() => { storageSet('cbc_ebirdApiKey', ebirdApiKey); }, [ebirdApiKey]);
-            useEffect(() => { storageSet('cbc_ebirdRegion', ebirdRegion); }, [ebirdRegion]);
+            useEffect(() => { storageSet('cbc_ebirdRegions', ebirdRegions); }, [ebirdRegions]);
             useEffect(() => { storageSet('cbc_taxonomyMap', taxonomyMap); }, [taxonomyMap]);
             useEffect(() => { storageSet('cbc_taxonomySyncedAt', taxonomySyncedAt); }, [taxonomySyncedAt]);
             useEffect(() => { storageSet('cbc_ebirdSyncedAt', ebirdSyncedAt); }, [ebirdSyncedAt]);
@@ -492,6 +526,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             const [statusFilter, setStatusFilter] = useState('ALL'); 
             const [selectedLocation, setSelectedLocation] = useState('ALL');
             const [selectedBird, setSelectedBird] = useState('ALL'); // Added bird selection state
+            const [selectedRegion, setSelectedRegion] = useState('ALL'); // Filter by eBird region code
             const [sortBy, setSortBy] = useState('bird');
             const [toastMsg, setToastMsg] = useState('');
 
@@ -610,8 +645,9 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
 
                     const matchesLocation = selectedLocation === 'ALL' || r.locationName === selectedLocation;
                     const matchesBirdSelection = selectedBird === 'ALL' || r.bird === selectedBird;
+                    const matchesRegion = selectedRegion === 'ALL' || r.region === selectedRegion;
 
-                    if (!matchesSearch || !matchesLocation || !matchesBirdSelection || !isWithinDateRange(r)) return false;
+                    if (!matchesSearch || !matchesLocation || !matchesBirdSelection || !matchesRegion || !isWithinDateRange(r)) return false;
 
                     if (statusFilter === 'SEEN') return r.seen === 'Y';
                     if (statusFilter === 'UNSEEN') return r.seen === 'N';
@@ -625,7 +661,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     if (sortBy === 'status') return b.seen.localeCompare(a.seen);
                     return 0;
                 });
-            }, [enrichedRecords, searchQuery, statusFilter, selectedLocation, selectedBird, sortBy, dateRangeFilter, customDateFrom, customDateTo]);
+            }, [enrichedRecords, searchQuery, statusFilter, selectedLocation, selectedBird, selectedRegion, sortBy, dateRangeFilter, customDateFrom, customDateTo]);
 
             const mapLocations = useMemo(() => {
                 const locMap = {};
@@ -679,7 +715,25 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     if (!mapContainerRef.current) return;
                     const map = L.map(mapContainerRef.current, { zoomControl: false }).setView([41.80, -70.30], 10);
                     mapInstance.current = map;
-                    markerLayerGroup.current = L.layerGroup().addTo(map);
+                    markerLayerGroup.current = L.markerClusterGroup({
+                        maxClusterRadius: 55,
+                        spiderfyOnMaxZoom: true,
+                        showCoverageOnHover: false,
+                        disableClusteringAtZoom: 15, // markers split apart into individual pins past this zoom
+                        iconCreateFunction: (cluster) => {
+                            const children = cluster.getAllChildMarkers();
+                            const hasAmber = children.some(m => m.options.cbcStatus === 'amber');
+                            const hasBlue = !hasAmber && children.some(m => m.options.cbcStatus === 'blue');
+                            const cls = hasAmber ? 'cbc-cluster-amber' : hasBlue ? 'cbc-cluster-blue' : 'cbc-cluster-green';
+                            const count = cluster.getChildCount();
+                            const size = Math.min(56, Math.max(32, 24 + Math.sqrt(count) * 6));
+                            return L.divIcon({
+                                html: `<div class="cbc-cluster-icon ${cls}" style="width:${size}px;height:${size}px;">${count}</div>`,
+                                className: '',
+                                iconSize: L.point(size, size)
+                            });
+                        }
+                    }).addTo(map);
                     L.control.zoom({ position: 'topright' }).addTo(map);
                     setMapReady(true);
                 };
@@ -754,18 +808,26 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     if (isNaN(lat) || isNaN(lng)) return;
 
                     const isFocused = selectedLocation === loc.name;
-                    const markerColor = loc.unseenRares > 0 ? '#f59e0b' : (loc.seen === loc.total ? '#10b981' : '#0d9488');
-                    // Radius scales with species count at the hotspot (more birds recorded = bigger dot),
+                    // Amber = unseen rare target here, sky blue = partially seen, emerald = fully
+                    // seen. Blue/green were previously too close (teal vs emerald) — swapped the
+                    // "partial" state to blue for a clearly distinct hue against both neighbors.
+                    const status = loc.unseenRares > 0 ? 'amber' : (loc.seen === loc.total ? 'green' : 'blue');
+                    const markerColor = status === 'amber' ? '#f59e0b' : status === 'green' ? '#10b981' : '#38bdf8';
+                    // Diameter scales with species count at the hotspot (more birds recorded = bigger dot),
                     // clamped to a sensible range so a handful of species and a hundred both read clearly.
-                    const baseRadius = Math.max(6, Math.min(22, 6 + Math.sqrt(loc.total) * 2.2));
-                    const radius = isFocused ? baseRadius + 5 : baseRadius;
+                    const baseSize = Math.max(14, Math.min(42, 14 + Math.sqrt(loc.total) * 4));
+                    const size = isFocused ? baseSize + 10 : baseSize;
+                    const opacity = loc.isActive ? 0.92 : 0.32;
+                    const ring = isFocused ? '3px solid #ffffff' : '1.5px solid #020617';
 
-                    const marker = L.circleMarker([lat, lng], {
-                        radius,
-                        fillColor: markerColor,
-                        color: isFocused ? '#ffffff' : '#020617',
-                        weight: isFocused ? 3 : 1.5,
-                        fillOpacity: loc.isActive ? 0.9 : 0.2
+                    const marker = L.marker([lat, lng], {
+                        cbcStatus: status,
+                        icon: L.divIcon({
+                            className: '',
+                            html: `<div style="width:${size}px;height:${size}px;border-radius:9999px;background:${markerColor};opacity:${opacity};border:${ring};box-sizing:border-box;"></div>`,
+                            iconSize: [size, size],
+                            iconAnchor: [size / 2, size / 2]
+                        })
                     });
 
                     marker.bindPopup(`
@@ -876,18 +938,18 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             };
 
             // --- eBird API: daily region sightings (recent + notable/rare) -------------------
-            // Pulls both feeds for the configured region (default Barnstable County, MA) and
-            // returns them in the same shape mergeReportEntries expects. Notable/rare results
-            // are tagged rare='Y'; everything else rare='N' (mergeReportEntries keeps 'Y' if a
-            // bird was already flagged rare from an earlier import).
+            // Pulls both feeds for a single region code and returns them in the shape
+            // mergeReportEntries expects, tagged with `region` so the app can filter by it later.
+            // Notable/rare results are tagged rare='Y'; everything else rare='N'
+            // (mergeReportEntries keeps 'Y' if a bird was already flagged rare from an earlier import).
             const fetchRegionSightings = async (key, regionCode) => {
                 const headers = { 'x-ebirdapitoken': key };
                 const [recentRes, notableRes] = await Promise.all([
                     fetch(`https://api.ebird.org/v2/data/obs/${regionCode}/recent?back=14&fmt=json`, { headers }),
                     fetch(`https://api.ebird.org/v2/data/obs/${regionCode}/recent/notable?back=30&fmt=json`, { headers })
                 ]);
-                if (!recentRes.ok) throw new Error(`Recent sightings fetch failed (HTTP ${recentRes.status})`);
-                if (!notableRes.ok) throw new Error(`Notable sightings fetch failed (HTTP ${notableRes.status})`);
+                if (!recentRes.ok) throw new Error(`Recent sightings fetch failed for ${regionCode} (HTTP ${recentRes.status})`);
+                if (!notableRes.ok) throw new Error(`Notable sightings fetch failed for ${regionCode} (HTTP ${notableRes.status})`);
                 const [recent, notable] = await Promise.all([recentRes.json(), notableRes.json()]);
 
                 const notableKeys = new Set(notable.map(o => `${o.locId}|${o.speciesCode}`));
@@ -896,17 +958,22 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     coordinates: (o.lat != null && o.lng != null) ? `${o.lat}, ${o.lng}` : '',
                     bird: o.comName,
                     rare: notableKeys.has(`${o.locId}|${o.speciesCode}`) ? 'Y' : 'N',
-                    lastReported: formatLongDate(new Date((o.obsDt || '').replace(' ', 'T')))
+                    lastReported: formatLongDate(new Date((o.obsDt || '').replace(' ', 'T'))),
+                    region: regionCode
                 });
                 return [...recent, ...notable].filter(o => o.comName && o.locName).map(toEntry);
             };
 
-            // Runs a full sync: taxonomy (if stale/empty) + today's region sightings, merged
-            // into the existing dataset. Called on load once a day automatically, and any time
-            // from the "Sync Now" button in Settings.
+            // Runs a full sync: taxonomy (if stale/empty) + today's sightings for every configured
+            // region, merged into the existing dataset. Called on load once a day automatically,
+            // and any time from the "Sync Now" button in Settings.
             const runEbirdSync = async ({ silent = false } = {}) => {
                 if (!ebirdApiKey) {
                     if (!silent) showToast("Add your eBird API key in Settings first.");
+                    return;
+                }
+                if (ebirdRegions.length === 0) {
+                    if (!silent) showToast("Add at least one region code in Settings first.");
                     return;
                 }
                 setIsSyncing(true);
@@ -918,10 +985,16 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                         setTaxonomyMap(map);
                         setTaxonomySyncedAt(Date.now());
                     }
-                    const entries = await fetchRegionSightings(ebirdApiKey, ebirdRegion);
-                    mergeReportEntries(entries, { silent: true });
+                    // Regions are fetched sequentially (not Promise.all) to stay well within eBird's
+                    // rate limits when several regions are configured.
+                    let allEntries = [];
+                    for (const regionCode of ebirdRegions) {
+                        const entries = await fetchRegionSightings(ebirdApiKey, regionCode);
+                        allEntries = allEntries.concat(entries);
+                    }
+                    mergeReportEntries(allEntries, { silent: true });
                     setEbirdSyncedAt(Date.now());
-                    if (!silent) showToast(`Synced with eBird — ${entries.length} sightings checked for ${ebirdRegion}.`);
+                    if (!silent) showToast(`Synced with eBird — ${allEntries.length} sightings checked across ${ebirdRegions.length} region(s).`);
                 } catch (err) {
                     const msg = err && err.message ? err.message : 'Sync failed';
                     setSyncError(msg);
@@ -929,6 +1002,21 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 } finally {
                     setIsSyncing(false);
                 }
+            };
+
+            const addRegion = () => {
+                const code = newRegionInput.trim().toUpperCase();
+                if (!code) return;
+                if (ebirdRegions.includes(code)) {
+                    showToast(`${code} is already in your region list.`);
+                    return;
+                }
+                setEbirdRegions(prev => [...prev, code]);
+                setNewRegionInput('');
+            };
+
+            const removeRegion = (code) => {
+                setEbirdRegions(prev => prev.filter(r => r !== code));
             };
 
             // Auto-sync once per day on load, if a key is present.
@@ -950,10 +1038,30 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                         showToast("Couldn't find a 'Common Name' column in that CSV.");
                         return;
                     }
-                    setLifeList(names);
-                    showToast(`Life list updated — ${names.length} species loaded.`);
+                    const label = newLifeListLabel.trim() || file.name.replace(/\.csv$/i, '') || 'Life List';
+                    const id = `${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`;
+                    setSavedLifeLists(prev => ({ ...prev, [id]: { label, names } }));
+                    setActiveLifeListId(id);
+                    setNewLifeListLabel('');
+                    showToast(`"${label}" loaded — ${names.length} species — and set as active.`);
                 } catch (err) {
                     showToast("Failed to read that life list file.");
+                }
+            };
+
+            const deleteLifeList = (id) => {
+                if (Object.keys(savedLifeLists).length <= 1) {
+                    showToast("Can't delete your only life list.");
+                    return;
+                }
+                setSavedLifeLists(prev => {
+                    const next = { ...prev };
+                    delete next[id];
+                    return next;
+                });
+                if (activeLifeListId === id) {
+                    const remaining = Object.keys(savedLifeLists).filter(k => k !== id);
+                    setActiveLifeListId(remaining[0]);
                 }
             };
 
@@ -980,7 +1088,8 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                             ...existing,
                             coordinates: existing.coordinates || entry.coordinates,
                             rare: existing.rare === 'Y' || entry.rare === 'Y' ? 'Y' : 'N',
-                            lastReported: newer ? entry.lastReported : existing.lastReported
+                            lastReported: newer ? entry.lastReported : existing.lastReported,
+                            region: existing.region || entry.region || ''
                         });
                         updated++;
                     } else {
@@ -990,7 +1099,8 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                             coordinates: entry.coordinates,
                             bird: entry.bird,
                             rare: entry.rare,
-                            lastReported: entry.lastReported
+                            lastReported: entry.lastReported,
+                            region: entry.region || ''
                         });
                         added++;
                     }
@@ -1083,15 +1193,29 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                         <p className="text-[9px] text-slate-500">Used for accurate eBird species links and daily sighting sync. Get a free key at ebird.org/api/keygen. Stored only on this device.</p>
                                     </div>
                                     <div className="space-y-1.5">
-                                        <label className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">eBird Region Code</label>
-                                        <input
-                                            type="text"
-                                            value={ebirdRegion}
-                                            onChange={(e) => setEbirdRegion(e.target.value.trim())}
-                                            placeholder="US-MA-001"
-                                            className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none"
-                                        />
-                                        <p className="text-[9px] text-slate-500">Default is Barnstable County, MA (US-MA-001). Find other region codes on eBird's Explore page URL.</p>
+                                        <label className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">eBird Regions ({ebirdRegions.length})</label>
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                value={newRegionInput}
+                                                onChange={(e) => setNewRegionInput(e.target.value)}
+                                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRegion(); } }}
+                                                placeholder="e.g. US-MA-023"
+                                                className="flex-grow bg-slate-950 border border-slate-800 text-slate-100 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none"
+                                            />
+                                            <button onClick={addRegion} className="bg-teal-500 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs hover:bg-teal-400 transition shrink-0">+ Add</button>
+                                        </div>
+                                        {ebirdRegions.length > 0 && (
+                                            <div className="flex flex-wrap gap-1.5 pt-1">
+                                                {ebirdRegions.map(code => (
+                                                    <span key={code} className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[10px] font-mono text-slate-300">
+                                                        {code}
+                                                        <button onClick={() => removeRegion(code)} className="text-slate-500 hover:text-rose-400 font-bold">✕</button>
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                        <p className="text-[9px] text-slate-500">Sync pulls recent + notable sightings for every region listed here. Barnstable County, MA is US-MA-001 — region codes appear in eBird's Explore page URLs (county = subnational2, state = subnational1).</p>
                                     </div>
                                 </div>
                                 <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-[10px] text-slate-400">
@@ -1136,8 +1260,27 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
                                         <h4 className="text-xs font-bold text-slate-200">eBird Life List (.csv)</h4>
-                                        <p className="text-[10px] text-slate-400">Your "Seen" status is auto-derived by matching birds against this list. Currently loaded: <strong className="text-teal-400">{lifeList.length}</strong> species.</p>
+                                        <p className="text-[10px] text-slate-400">"Seen" status is derived by matching birds against whichever life list is active below. Upload one per person to share this site — a friend's own gaps show up the moment they switch to theirs.</p>
+                                        <input
+                                            type="text"
+                                            value={newLifeListLabel}
+                                            onChange={(e) => setNewLifeListLabel(e.target.value)}
+                                            placeholder="Label this list (e.g. 'Sam')"
+                                            className="w-full bg-slate-900 border border-slate-800 text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:outline-none"
+                                        />
                                         <button onClick={() => lifeListFileRef.current?.click()} className="w-full bg-teal-500 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs hover:bg-teal-400 transition">Upload Life List CSV</button>
+                                        <div className="space-y-1 pt-1">
+                                            {Object.entries(savedLifeLists).map(([id, list]) => (
+                                                <div key={id} className={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[10px] border ${id === activeLifeListId ? 'bg-teal-950/40 border-teal-500/40' : 'bg-slate-900 border-slate-800'}`}>
+                                                    <button onClick={() => setActiveLifeListId(id)} className={`text-left flex-1 truncate font-bold ${id === activeLifeListId ? 'text-teal-400' : 'text-slate-300 hover:text-white'}`}>
+                                                        {id === activeLifeListId ? '● ' : '○ '}{list.label} <span className="text-slate-500 font-normal">({list.names.length})</span>
+                                                    </button>
+                                                    {Object.keys(savedLifeLists).length > 1 && (
+                                                        <button onClick={() => deleteLifeList(id)} className="text-slate-500 hover:text-rose-400 font-bold shrink-0">✕</button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
                                     </div>
                                     <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
                                         <h4 className="text-xs font-bold text-slate-200">Sighting Report (.docx / .txt / .tsv)</h4>
@@ -1240,13 +1383,17 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                         <div className="font-bold text-slate-300 uppercase tracking-wider text-[9px] mb-1.5">Legend</div>
                                         <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#f59e0b' }} /><span className="text-slate-400">Unseen rare target here</span></div>
                                         <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#10b981' }} /><span className="text-slate-400">Fully seen</span></div>
-                                        <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#0d9488' }} /><span className="text-slate-400">Partially seen</span></div>
+                                        <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#38bdf8' }} /><span className="text-slate-400">Partially seen</span></div>
                                         <div className="flex items-center gap-2 pt-1 border-t border-slate-800 mt-1.5">
                                             <span className="flex items-center gap-0.5">
                                                 <span className="w-1.5 h-1.5 rounded-full bg-slate-500 inline-block" />
                                                 <span className="w-3 h-3 rounded-full bg-slate-500 inline-block" />
                                             </span>
                                             <span className="text-slate-400">Size = species count</span>
+                                        </div>
+                                        <div className="flex items-center gap-2 pt-1 border-t border-slate-800 mt-1.5">
+                                            <span className="w-4 h-4 rounded-full bg-slate-500 inline-flex items-center justify-center text-[7px] font-bold text-slate-950">12</span>
+                                            <span className="text-slate-400">Cluster — zoom in to split apart</span>
                                         </div>
                                     </div>
                                 </div>
@@ -1335,13 +1482,20 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
 
                             <div className="lg:col-span-7 space-y-4">
                                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4 shadow-md">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                         <input type="text" placeholder="Search species..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-xl px-4 py-2 text-xs focus:outline-none" />
                                         <select value={selectedLocation} onChange={(e) => setSelectedLocation(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-300 rounded-xl px-4 py-2 text-xs focus:outline-none">
                                             <option value="ALL">📍 All Hotspots</option>
                                             {Array.from(new Set(enrichedRecords.map(r => r.locationName))).sort().map((loc, idx) => (
                                                 <option key={idx} value={loc}>{loc}</option>
                                             ))}
+                                        </select>
+                                        <select value={selectedRegion} onChange={(e) => setSelectedRegion(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-300 rounded-xl px-4 py-2 text-xs focus:outline-none">
+                                            <option value="ALL">🌐 All Regions</option>
+                                            {Array.from(new Set(enrichedRecords.map(r => r.region).filter(Boolean))).sort().map((region, idx) => (
+                                                <option key={idx} value={region}>{region}</option>
+                                            ))}
+                                            {enrichedRecords.some(r => !r.region) && <option value="">Untagged / manual entries</option>}
                                         </select>
                                     </div>
                                     <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
@@ -1563,7 +1717,9 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
         // Note: the TSV format no longer carries a "Seen" column. Seen/unseen status is
         // derived at render time by comparing each bird against the uploaded eBird life list
         // (see computeSeen / useLifeListSet below), with room for manual overrides that survive
-        // TSV re-imports (see seenOverrides state in App).
+        // TSV re-imports (see seenOverrides state in App). A "Region" column (eBird region code,
+        // e.g. US-MA-001) was added for multi-region support; it's optional/blank for older or
+        // manually-added rows, which just won't be excluded by the region filter.
         function parseTSV(text) {
             const lines = text.trim().split('\n');
             const result = [];
@@ -1581,6 +1737,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 const bird = cols[2].trim();
                 const rare = cols[3]?.trim() || "N";
                 const date = cols[4]?.trim() || "";
+                const region = cols[5]?.trim() || "";
 
                 if (loc !== "") {
                     currentLoc = loc;
@@ -1593,14 +1750,15 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     coordinates: currentCoords,
                     bird: bird,
                     rare: rare,
-                    lastReported: date
+                    lastReported: date,
+                    region: region
                 });
             }
             return result;
         }
 
         function recordsToTSV(records) {
-            const header = "Location Name\tCoordinates\tBird\tRare (Y/N)\tLast Reported";
+            const header = "Location Name\tCoordinates\tBird\tRare (Y/N)\tLast Reported\tRegion";
             let lastLoc = "";
             let lastCoords = "";
             const rows = records.map(r => {
@@ -1612,7 +1770,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     lastLoc = r.locationName;
                     lastCoords = r.coordinates;
                 }
-                return `${locCol}\t${coordCol}\t${r.bird}\t${r.rare}\t${r.lastReported}`;
+                return `${locCol}\t${coordCol}\t${r.bird}\t${r.rare}\t${r.lastReported}\t${r.region || ''}`;
             });
             return [header, ...rows].join('\n');
         }
