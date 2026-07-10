@@ -53,7 +53,6 @@
     <script type="text/babel">
         const { useState, useMemo, useRef, useEffect } = React;
 
-        // NEW TSV DATA SPECIFICATION (Removed Seen Y/N Column)
         const INITIAL_RAW_DATA = `Location Name	Coordinates	Bird	Rare (Y/N)	Last Reported
 Barnstable Clean Water Coalition Cranberry Bogs	41.6714674, -70.4275267	Canada Goose	N	Thursday, July 9, 2026
 		Mute Swan	N	Thursday, July 9, 2026
@@ -281,7 +280,7 @@ Great Pond, Barnstable	41.835535, -69.993904	Red-bellied Woodpecker	N	Wednesday,
 Ridgevale RD, South Chatham	41.6745337, -70.004765	Glossy Ibis	N	Wednesday, July 8, 2026
 Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, July 9, 2026`;
 
-        // Direct common name to exact eBird species code conversion map (fixed with user corrections)
+        // Direct common name to exact eBird species code conversion map
         const EBIRD_CODE_MAP = {
             "Canada Goose": "cangoo",
             "Mute Swan": "mutswa",
@@ -375,824 +374,6 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             return `https://ebird.org/search?q=${encodeURIComponent(cleanName)}`;
         }
 
-        //        function parseTSV(text) {
-            const lines = text.trim().split('\n');
-            const result = [];
-            let currentLoc = "";
-            let currentCoords = "";
-
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                if (i === 0 && line.toLowerCase().includes('location name')) continue; 
-                const cols = line.split('\t');
-                if (cols.length < 3) continue;
-
-                let loc = cols[0].trim();
-                let coords = cols[1].trim();
-                const bird = cols[2].trim();
-                const rare = cols[3]?.trim() || "N";
-                const date = cols[4]?.trim() || "";
-
-                if (loc !== "") {
-                    currentLoc = loc;
-                    currentCoords = coords;
-                }
-
-                result.push({
-                    id: `${currentLoc}-${bird}-${i}`,
-                    locationName: currentLoc,
-                    coordinates: currentCoords,
-                    bird: bird,
-                    rare: rare,
-                    lastReported: date
-                });
-            }
-            return result;
-        }
-
-        function recordsToTSV(records) {
-            const header = "Location Name\tCoordinates\tBird\tRare (Y/N)\tLast Reported";
-            let lastLoc = "";
-            let lastCoords = "";
-            const rows = records.map(r => {
-                let locCol = "";
-                let coordCol = "";
-                if (r.locationName !== lastLoc || r.coordinates !== lastCoords) {
-                    locCol = r.locationName;
-                    coordCol = r.coordinates;
-                    lastLoc = r.locationName;
-                    lastCoords = r.coordinates;
-                }
-                return `${locCol}\t${coordCol}\t${r.bird}\t${r.rare}\t${r.lastReported}`;
-            });
-            return [header, ...rows].join('\n');
-        }
-
-        // CSV parsing helper optimized for ebird_world_life_list.csv formats
-        function parseLifeListCSV(text) {
-            const lines = text.split('\n');
-            const species = new Set();
-            if (lines.length === 0) return species;
-            
-            // Search for column header matches
-            let commonNameIndex = -1;
-            const headerCols = parseCSVLine(lines[0]);
-            for (let i = 0; i < headerCols.length; i++) {
-                const head = headerCols[i].toLowerCase().replace(/[^a-z0-9]/g, '');
-                if (head === 'commonname' || head === 'species') {
-                    commonNameIndex = i;
-                    break;
-                }
-            }
-            if (commonNameIndex === -1) commonNameIndex = 1; // standard eBird Life list columns fallback
-
-            for (let i = 1; i < lines.length; i++) {
-                const line = lines[i].trim();
-                if (!line) continue;
-                const cols = parseCSVLine(line);
-                if (cols.length > commonNameIndex) {
-                    const name = cols[commonNameIndex].trim();
-                    if (name) species.add(name.toLowerCase());
-                }
-            }
-            return species;
-        }
-
-        function parseCSVLine(line) {
-            const result = [];
-            let current = '';
-            let inQuotes = false;
-            for (let i = 0; i < line.length; i++) {
-                const char = line[i];
-                if (char === '"' || char === "'") {
-                    inQuotes = !inQuotes;
-                } else if (char === ',' && !inQuotes) {
-                    result.push(current.trim().replace(/^["']|["']$/g, ''));
-                    current = '';
-                } else {
-                    current += char;
-                }
-            }
-            result.push(current.trim().replace(/^["']|["']$/g, ''));
-            return result;
-        }
-
-        //        function App() {
-            const [rawData, setRawData] = useState(INITIAL_RAW_DATA);
-            const [pastedData, setPastedData] = useState('');
-            const [showSyncPanel, setShowSyncPanel] = useState(false);
-            
-            // Life List comparison set state loaded from ebird_world_life_list.csv
-            const [lifeListSet, setLifeListSpecies] = useState(new Set());
-            const [lifeListFileName, setLifeListFileName] = useState('');
-
-            // Locally toggled Seen states to merge alongside lifeListSet comparisons
-            const [manualSeenStates, setManualSeenStates] = useState({});
-
-            const [searchQuery, setSearchQuery] = useState('');
-            const [statusFilter, setStatusFilter] = useState('ALL'); 
-            const [selectedLocation, setSelectedLocation] = useState('ALL');
-            const [selectedBird, setSelectedBird] = useState('ALL');
-            const [sortBy, setSortBy] = useState('bird');
-            const [toastMsg, setToastMsg] = useState('');
-
-            // Install Prompt Intercept State
-            const [deferredPrompt, setDeferredPrompt] = useState(null);
-            const [isInstallable, setIsInstallable] = useState(false);
-
-            const [basemapStyle, setBasemapStyle] = useState('dark');
-            const [leafletLoaded, setLeafletLoaded] = useState(false);
-            const [mapReady, setMapReady] = useState(false);
-            const mapContainerRef = useRef(null);
-            const mapInstance = useRef(null);
-            const markerLayerGroup = useRef(null);
-
-            const [isAddOpen, setIsAddOpen] = useState(false);
-            const [newBird, setNewBird] = useState({
-                locationName: '', coordinates: '', bird: '', rare: 'N', lastReported: 'Thursday, July 9, 2026'
-            });
-
-            // Capture install criteria
-            useEffect(() => {
-                window.addEventListener('beforeinstallprompt', (e) => {
-                    e.preventDefault();
-                    setDeferredPrompt(e);
-                    setIsInstallable(true);
-                });
-
-                window.addEventListener('appinstalled', () => {
-                    setIsInstallable(false);
-                    showToast("Cape Cod Birding Console installed on Home Screen!");
-                });
-            }, []);
-
-            const handleInstallApp = async () => {
-                if (!deferredPrompt) return;
-                deferredPrompt.prompt();
-                const { outcome } = await deferredPrompt.userChoice;
-                if (outcome === 'accepted') {
-                    setDeferredPrompt(null);
-                    setIsInstallable(false);
-                }
-            };
-
-            // Map and combine TSV records with ebird_world_life_list.csv comparison rules
-            const birdRecords = useMemo(() => {
-                try {
-                    const rawRecords = parseTSV(rawData);
-                    return rawRecords.map(r => {
-                        // Seen if explicitly defined in the uploaded ebird_world_life_list.csv OR manually marked in UI
-                        const isSeen = lifeListSet.has(r.bird.toLowerCase()) || !!manualSeenStates[r.bird.toLowerCase()];
-                        return {
-                            ...r,
-                            seen: isSeen ? 'Y' : 'N'
-                        };
-                    });
-                } catch (e) {
-                    return [];
-                }
-            }, [rawData, lifeListSet, manualSeenStates]);
-
-            const stats = useMemo(() => {
-                const total = birdRecords.length;
-                const seenCount = birdRecords.filter(r => r.seen === 'Y').length;
-                const rareCount = birdRecords.filter(r => r.rare === 'Y').length;
-                const priorityCount = birdRecords.filter(r => r.rare === 'Y' && r.seen === 'N').length;
-                const uniqueSpots = new Set(birdRecords.map(r => r.locationName)).size;
-
-                return {
-                    total, seenCount, unseenCount: total - seenCount,
-                    seenPercentage: total > 0 ? Math.round((seenCount / total) * 100) : 0,
-                    rareCount, priorityCount, uniqueSpots
-                };
-            }, [birdRecords]);
-
-            const toggleSeen = (birdName) => {
-                const key = birdName.toLowerCase();
-                const isCurrentlySeen = lifeListSet.has(key) || !!manualSeenStates[key];
-                
-                setManualSeenStates(prev => ({
-                    ...prev,
-                    [key]: !isCurrentlySeen
-                }));
-                showToast(`${birdName} seen status updated.`);
-            };
-
-            const deleteRecord = (id) => {
-                const updated = birdRecords.filter(rec => rec.id !== id);
-                setRawData(recordsToTSV(updated));
-                showToast("Entry deleted.");
-            };
-
-            //            const filteredRecords = useMemo(() => {
-                return birdRecords.filter(r => {
-                    const matchesSearch = 
-                        r.bird.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        r.locationName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        r.coordinates.includes(searchQuery);
-
-                    const matchesLocation = selectedLocation === 'ALL' || r.locationName === selectedLocation;
-                    const matchesBirdSelection = selectedBird === 'ALL' || r.bird === selectedBird;
-
-                    if (!matchesSearch || !matchesLocation || !matchesBirdSelection) return false;
-
-                    if (statusFilter === 'SEEN') return r.seen === 'Y';
-                    if (statusFilter === 'UNSEEN') return r.seen === 'N';
-                    if (statusFilter === 'RARE') return r.rare === 'Y';
-                    if (statusFilter === 'PRIORITY') return r.rare === 'Y' && r.seen === 'N';
-                    return true;
-                }).sort((a, b) => {
-                    if (sortBy === 'location') return a.locationName.localeCompare(b.locationName);
-                    if (sortBy === 'bird') return a.bird.localeCompare(b.bird);
-                    if (sortBy === 'date') return new Date(b.lastReported || 0) - new Date(a.lastReported || 0);
-                    if (sortBy === 'status') return b.seen.localeCompare(a.seen);
-                    return 0;
-                });
-            }, [birdRecords, searchQuery, statusFilter, selectedLocation, selectedBird, sortBy]);
-
-            const mapLocations = useMemo(() => {
-                const locMap = {};
-                
-                filteredRecords.forEach(r => {
-                    if (!locMap[r.locationName]) {
-                        locMap[r.locationName] = {
-                            name: r.locationName, coords: r.coordinates, total: 0, seen: 0, unseenRares: 0, isActive: true, birds: []
-                        };
-                    }
-                    const item = locMap[r.locationName];
-                    item.total += 1;
-                    if (r.seen === 'Y') item.seen += 1;
-                    if (r.rare === 'Y') {
-                        item.rares += 1;
-                        if (r.seen === 'N') item.unseenRares += 1;
-                    }
-                    item.birds.push(r);
-                });
-
-                birdRecords.forEach(r => {
-                    if (!locMap[r.locationName]) {
-                        locMap[r.locationName] = {
-                            name: r.locationName, coords: r.coordinates, total: 0, seen: 0, unseenRares: 0, isActive: false, birds: []
-                        };
-                    }
-                    const item = locMap[r.locationName];
-                    if (!item.isActive) {
-                        item.total += 1;
-                        if (r.seen === 'Y') item.seen += 1;
-                        if (r.rare === 'Y') {
-                            item.rares += 1;
-                            if (r.seen === 'N') item.unseenRares += 1;
-                        }
-                        item.birds.push(r);
-                    }
-                });
-
-                return Object.values(locMap).sort((a, b) => {
-                    if (a.isActive && !b.isActive) return -1;
-                    if (!a.isActive && b.isActive) return 1;
-                    return b.unseenRares - a.unseenRares || b.total - a.total;
-                });
-            }, [filteredRecords, birdRecords]);
-
-            // Handling Life List CSV Import matching verbatim filenames
-            const handleLifeListFile = (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                
-                setLifeListFileName(file.name);
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    const parsedSet = parseLifeListCSV(event.target.result);
-                    setLifeListSpecies(parsedSet);
-                    showToast(`Loaded ${parsedSet.size} life list species matches from ${file.name}!`);
-                };
-                reader.readAsText(file);
-            };
-
-            // Map Booting Pipeline
-            useEffect(() => {
-                if (typeof window === 'undefined') return;
-                
-                const initMap = () => {
-                    if (!mapContainerRef.current) return;
-                    const map = L.map(mapContainerRef.current, { zoomControl: false }).setView([41.80, -70.30], 10);
-                    mapInstance.current = map;
-                    markerLayerGroup.current = L.layerGroup().addTo(map);
-                    L.control.zoom({ position: 'topright' }).addTo(map);
-                    setMapReady(true);
-                };
-
-                if (!document.getElementById('leaflet-css-pkg')) {
-                    const link = document.createElement('link');
-                    link.id = 'leaflet-css-pkg';
-                    link.rel = 'stylesheet';
-                    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-                    document.head.appendChild(link);
-                }
-
-                if (!document.getElementById('leaflet-js-pkg')) {
-                    const script = document.createElement('script');
-                    script.id = 'leaflet-js-pkg';
-                    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-                    script.onload = () => {
-                        setLeafletLoaded(true);
-                        initMap();
-                    };
-                    document.head.appendChild(script);
-                } else {
-                    setLeafletLoaded(true);
-                    if (window.L && !mapInstance.current) {
-                        initMap();
-                    }
-                }
-
-                return () => {
-                    if (mapInstance.current) {
-                        mapInstance.current.remove();
-                        mapInstance.current = null;
-                        setMapReady(false);
-                    }
-                };
-            }, []);
-
-            useEffect(() => {
-                if (!mapInstance.current || !mapReady) return;
-                const map = mapInstance.current;
-
-                map.eachLayer(layer => {
-                    if (layer instanceof L.TileLayer) map.removeLayer(layer);
-                });
-
-                let tileUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
-                let att = '© CARTO';
-
-                if (basemapStyle === 'streets') {
-                    tileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-                    att = '© OSM';
-                } else if (basemapStyle === 'satellite') {
-                    tileUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-                    att = 'Esri';
-                }
-
-                L.tileLayer(tileUrl, { attribution: att }).addTo(map);
-            }, [basemapStyle, mapReady]);
-
-            // Draw markers instantly on launch
-            useEffect(() => {
-                if (!mapInstance.current || !markerLayerGroup.current || !mapReady) return;
-                const group = markerLayerGroup.current;
-                group.clearLayers();
-                const bounds = [];
-
-                mapLocations.forEach(loc => {
-                    if (!loc.coords) return;
-                    const parts = loc.coords.split(',');
-                    const lat = parseFloat(parts[0]);
-                    const lng = parseFloat(parts[1]);
-                    if (isNaN(lat) || isNaN(lng)) return;
-
-                    const isFocused = selectedLocation === loc.name;
-                    const markerColor = loc.unseenRares > 0 ? '#f59e0b' : (loc.seen === loc.total ? '#10b981' : '#0d9488');
-
-                    const marker = L.circleMarker([lat, lng], {
-                        radius: isFocused ? 13 : 7,
-                        fillColor: markerColor,
-                        color: isFocused ? '#ffffff' : '#020617',
-                        weight: isFocused ? 3 : 1.5,
-                        fillOpacity: loc.isActive ? 0.9 : 0.2
-                    });
-
-                    marker.bindPopup(`
-                        <div class="text-xs">
-                            <h4 class="font-bold text-teal-400">📍 ${loc.name}</h4>
-                            <div class="mt-1">Seen Progress: <strong>${loc.seen} / ${loc.total}</strong></div>
-                        </div>
-                    `);
-
-                    marker.on('click', () => setSelectedLocation(loc.name));
-                    marker.addTo(group);
-
-                    if (loc.isActive) bounds.push([lat, lng]);
-                });
-
-                if (selectedLocation === 'ALL' && bounds.length > 0) {
-                    mapInstance.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 13 });
-                } else if (selectedLocation !== 'ALL') {
-                    const target = mapLocations.find(l => l.name === selectedLocation);
-                    if (target && target.coords) {
-                        const parts = target.coords.split(',');
-                        mapInstance.current.setView([parseFloat(parts[0]), parseFloat(parts[1])], 13);
-                    }
-                }
-            }, [mapLocations, selectedLocation, mapReady]);
-
-            //            const handleMetricClick = (filterType) => {
-                setStatusFilter(prev => prev === filterType ? 'ALL' : filterType);
-            };
-
-            const handleAddSubmit = (e) => {
-                e.preventDefault();
-                const updated = [...birdRecords, { ...newBird, id: `custom-${Date.now()}` }];
-                setRawData(recordsToTSV(updated));
-                setIsAddOpen(false);
-                setNewBird({ locationName: '', coordinates: '', bird: '', rare: 'N', lastReported: 'Thursday, July 9, 2026' });
-                showToast("Added target successfully!");
-            };
-
-            // Geolocation Sensor Handler
-            const handleGetLocation = () => {
-                if (navigator.geolocation) {
-                    navigator.geolocation.getCurrentPosition(
-                        (position) => {
-                            const lat = position.coords.latitude.toFixed(7);
-                            const lng = position.coords.longitude.toFixed(7);
-                            setNewBird(prev => ({ ...prev, coordinates: `${lat}, ${lng}` }));
-                            showToast("Coordinates captured!");
-                        },
-                        (error) => {
-                            showToast("Failed to fetch coordinates. Check sensor permissions.");
-                        }
-                    );
-                } else {
-                    showToast("Sensor tracking not supported by this device.");
-                }
-            };
-
-            return (
-                <div className="flex flex-col min-h-screen">
-                    <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 px-4 py-3 md:px-8">
-                        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-                            <div class="flex items-center gap-3">
-                                <div class="bg-gradient-to-tr from-teal-500 to-emerald-400 p-2.5 rounded-xl text-slate-950">
-                                    <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                    </svg>
-                                </div>
-                                <div>
-                                    <h1 className="text-lg md:text-xl font-black bg-gradient-to-r from-teal-400 to-emerald-400 bg-clip-text text-transparent">CAPE COD BIRD SIGHTINGS</h1>
-                                    <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold">Interactive Cape Code Bird Sighting Portal</p>
-                                </div>
-                            </div>
-                            
-                            <div className="flex flex-wrap gap-2 items-center">
-                                {/* ebird_world_life_list.csv Upload Port */}
-                                <label className="bg-slate-800 border border-slate-700 hover:border-slate-500 hover:bg-slate-750 text-slate-300 font-semibold px-3.5 py-2 rounded-xl text-xs cursor-pointer transition flex items-center gap-1.5 shadow-md">
-                                    <span>📂</span>
-                                    <span>{lifeListFileName ? 'Sync Life List' : 'ebird_world_life_list.csv'}</span>
-                                    <input 
-                                        type="file" 
-                                        accept=".csv" 
-                                        onChange={handleLifeListFile} 
-                                        className="hidden" 
-                                    />
-                                </label>
-
-                                {isInstallable && (
-                                    <button 
-                                        onClick={handleInstallApp}
-                                        className="bg-emerald-500 text-slate-950 font-black px-3.5 py-2 rounded-xl text-xs hover:bg-emerald-400 transition flex items-center gap-1.5 shadow-lg shadow-emerald-500/20"
-                                    >
-                                        <span>📲</span> Install App
-                                    </button>
-                                )}
-                                <button onClick={() => setIsAddOpen(true)} className="bg-teal-500 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs shadow-lg hover:bg-teal-400 transition">+ Sighting</button>
-                                <button onClick={() => { setPastedData(rawData); setShowSyncPanel(!showSyncPanel); }} className="bg-slate-800 text-slate-300 border border-slate-700 font-semibold px-4 py-2 rounded-xl text-xs hover:bg-slate-700 transition">Sync TSV</button>
-                            </div>
-                        </div>
-                    </header>
-
-                    {/* */}
-                    <main className="max-w-7xl mx-auto px-4 py-6 md:px-8 flex-1 w-full space-y-6">
-                        {showSyncPanel && (
-                            <div className="bg-slate-900 border border-teal-500/30 rounded-2xl p-5 space-y-4 shadow-xl">
-                                <div className="flex justify-between items-center">
-                                    <h3 className="text-sm font-bold text-teal-400">Database Editor</h3>
-                                    <button onClick={() => setShowSyncPanel(false)} className="text-slate-400 text-xs px-2 hover:text-white">Close</button>
-                                </div>
-                                <textarea className="w-full h-44 bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-[10px] text-emerald-400 focus:outline-none" value={pastedData} onChange={(e) => setPastedData(e.target.value)} />
-                                <div className="flex justify-end gap-2 text-xs">
-                                    <button onClick={() => { setRawData(pastedData); setShowSyncPanel(false); showToast("Checklist synced!"); }} className="bg-teal-500 text-slate-950 px-4 py-1.5 rounded font-bold">Apply</button>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Top metric panels */}
-                        <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                            <div onClick={() => handleMetricClick('SEEN')} className={`p-4 rounded-2xl border transition-all flex flex-col justify-between cursor-pointer ${statusFilter === 'SEEN' ? 'bg-teal-950/40 border-teal-400' : 'bg-slate-900 border-slate-800'}`}>
-                                <span className="text-[10px] text-slate-400 uppercase tracking-widest font-black">Encountered species</span>
-                                <div className="flex items-baseline gap-2 mt-2">
-                                    <span className="text-3xl font-black text-white">{stats.seenCount}</span>
-                                    <span className="text-slate-500 text-xs">/ {stats.total} seen</span>
-                                </div>
-                                <div className="mt-3">
-                                    <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                                        <div className="bg-teal-500 h-full transition-all" style={{ width: `${stats.seenPercentage}%` }} />
-                                    </div>
-                                    <span className="text-[9px] text-teal-400 mt-1 block font-bold">{stats.seenPercentage}% Complete</span>
-                                </div>
-                            </div>
-
-                            <div onClick={() => handleMetricClick('UNSEEN')} className={`p-4 rounded-2xl border transition-all flex flex-col justify-between cursor-pointer ${statusFilter === 'UNSEEN' ? 'bg-sky-950/40 border-sky-400' : 'bg-slate-900 border-slate-800'}`}>
-                                <span className="text-[10px] text-slate-400 uppercase tracking-widest font-black">Unseen species</span>
-                                <div className="flex items-baseline gap-2 mt-2">
-                                    <span className="text-3xl font-black text-sky-400">{stats.unseenCount}</span>
-                                    <span className="text-slate-500 text-xs">remaining targets</span>
-                                </div>
-                                <span className="text-[9px] text-slate-400 mt-3 block font-bold">Click to filter remaining checklist</span>
-                            </div>
-
-                            <div onClick={() => handleMetricClick('RARE')} className={`p-4 rounded-2xl border transition-all flex flex-col justify-between cursor-pointer ${statusFilter === 'RARE' ? 'bg-amber-950/40 border-amber-400' : 'bg-slate-900 border-slate-800'}`}>
-                                <span className="text-[10px] text-amber-400 uppercase tracking-widest font-black flex items-center gap-1.5">
-                                    <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-ping" />
-                                    Rare species
-                                </span>
-                                <div className="flex items-baseline gap-2 mt-2">
-                                    <span className="text-3xl font-black text-amber-300">{stats.rareCount}</span>
-                                    <span className="text-slate-500 text-xs">checked off</span>
-                                </div>
-                                <span className="text-[9px] text-slate-400 mt-3 block font-bold">Click to show rare distribution paths</span>
-                            </div>
-
-                            <div onClick={() => handleMetricClick('PRIORITY')} className={`p-4 rounded-2xl border transition-all flex flex-col justify-between cursor-pointer ${statusFilter === 'PRIORITY' ? 'bg-rose-950/40 border-rose-400' : 'bg-slate-900 border-slate-800'}`}>
-                                <span className="text-[10px] text-rose-400 uppercase tracking-widest font-black">Priority targets</span>
-                                <div className="flex items-baseline gap-2 mt-2">
-                                    <span className="text-3xl font-black text-rose-400">{stats.priorityCount}</span>
-                                    <span className="text-slate-500 text-xs">unseen & rare</span>
-                                </div>
-                                <span className="text-[9px] text-rose-300 mt-3 block font-bold">Click to locate urgent search zones</span>
-                            </div>
-                        </section>
-
-                        <section className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-2xl relative overflow-hidden">
-                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
-                                <div>
-                                    <div className="flex items-center gap-2">
-                                        <span className="bg-teal-500/10 text-teal-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider">Live GIS Basemap</span>
-                                        {selectedLocation !== 'ALL' && <span className="text-slate-500 text-xs font-mono">Filter active: {selectedLocation}</span>}
-                                    </div>
-                                    <h2 className="text-base font-black text-white mt-1">Sighting Map</h2>
-                                </div>
-
-                                <div className="flex bg-slate-950 rounded-xl p-1 border border-slate-800 text-[11px] font-bold">
-                                    {[
-                                        { id: 'dark', label: 'Dark Navy' },
-                                        { id: 'streets', label: 'Streets' },
-                                        { id: 'satellite', label: 'Satellite' }
-                                    ].map(opt => (
-                                        <button key={opt.id} onClick={() => setBasemapStyle(opt.id)} className={`px-3 py-1.5 rounded-lg transition-all ${basemapStyle === opt.id ? 'bg-slate-800 text-teal-400' : 'text-slate-400 hover:text-white'}`}>{opt.label}</button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-                                <div className="lg:col-span-8 bg-slate-950 border border-slate-800 rounded-2xl min-h-[400px] relative overflow-hidden z-10">
-                                    <div ref={mapContainerRef} className="w-full h-full min-h-[400px]" />
-                                </div>
-
-                                <div className="lg:col-span-4 bg-slate-950/40 border border-slate-800/80 rounded-2xl p-4 flex flex-col justify-between space-y-4">
-                                    <div>
-                                        <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 mb-2">Focused Hotspot details</h3>
-                                        {selectedLocation === 'ALL' ? (
-                                            <div className="space-y-3 py-6 text-center">
-                                                <p className="text-slate-500 text-xs italic">Select any plotted node on the map, or select from the registry below to investigate focused regional wildlife densities.</p>
-                                            </div>
-                                        ) : (
-                                            (() => {
-                                                const activeLoc = mapLocations.find(l => l.name === selectedLocation);
-                                                if (!activeLoc) return null;
-                                                return (
-                                                    <div className="space-y-3">
-                                                        <div className="border-b border-slate-800 pb-2">
-                                                            <h4 className="text-xs font-black text-white">{activeLoc.name}</h4>
-                                                            <span className="text-[9px] text-slate-400 font-mono block mt-1">Coords: {activeLoc.coords}</span>
-                                                        </div>
-                                                        <div className="grid grid-cols-2 gap-2 text-center text-xs">
-                                                            <div className="bg-slate-900 p-2 rounded-lg border border-slate-800">
-                                                                <span className="text-slate-500 block text-[8px] uppercase font-bold">Rarity footprint</span>
-                                                                <span className="font-extrabold text-amber-400">{activeLoc.unseenRares} Targets</span>
-                                                            </div>
-                                                            <div className="bg-slate-900 p-2 rounded-lg border border-slate-800">
-                                                                <span className="text-slate-500 block text-[8px] uppercase font-bold">Encounter state</span>
-                                                                <span className="font-extrabold text-teal-400">{activeLoc.seen} / {activeLoc.total}</span>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })()
-                                        )}
-                                    </div>
-                                    {selectedLocation !== 'ALL' && <button onClick={() => setSelectedLocation('ALL')} className="w-full bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-bold py-2 rounded-xl transition">Reset Focus</button>}
-                                </div>
-                            </div>
-                        </section>
-
-                        {/* */}
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                            <div className="lg:col-span-5">
-                                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-lg">
-                                    <div>
-                                        <h2 className="text-xs font-extrabold uppercase text-teal-400 tracking-wider">Hotspots ranking matrix</h2>
-                                        <p className="text-[11px] text-slate-400 mt-1">Real-time status tracking updates on geographic markers</p>
-                                    </div>
-                                    <div className="space-y-2.5 max-h-[480px] overflow-y-auto pr-1">
-                                        {mapLocations.map((loc, idx) => {
-                                            const progressPct = loc.total > 0 ? Math.round((loc.seen / loc.total) * 100) : 0;
-                                            const isFocused = selectedLocation === loc.name;
-                                            return (
-                                                <div key={idx} onClick={() => setSelectedLocation(isFocused ? 'ALL' : loc.name)} className={`p-3 rounded-xl border transition cursor-pointer text-xs ${isFocused ? 'bg-slate-850 border-teal-500 shadow-md' : 'bg-slate-950 border-slate-800 hover:border-slate-700'} ${!loc.isActive ? 'opacity-40' : ''}`}>
-                                                    <div className="flex justify-between items-start gap-2 mb-1">
-                                                        <h3 className="font-bold text-slate-200 leading-tight">{loc.name}</h3>
-                                                        {loc.unseenRares > 0 && loc.isActive && <span className="bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1.5 py-0.5 rounded text-[8px] font-black">⚠️ {loc.unseenRares} Rare Target</span>}
-                                                    </div>
-                                                    <div className="flex justify-between items-center text-[10px] text-slate-400 mt-1.5">
-                                                        <span>Species: <strong>{loc.total}</strong></span>
-                                                        <span>Progress: <strong>{progressPct}%</strong></span>
-                                                    </div>
-                                                    <div className="mt-2"><div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden"><div className="bg-teal-500 h-full transition-all" style={{ width: `${progressPct}%` }} /></div></div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="lg:col-span-7 space-y-4">
-                                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4 shadow-md">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                        <input type="text" placeholder="Search species..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-xl px-4 py-2 text-xs focus:outline-none" />
-                                        <select value={selectedLocation} onChange={(e) => setSelectedLocation(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-300 rounded-xl px-4 py-2 text-xs focus:outline-none">
-                                            <option value="ALL">📍 All Hotspots</option>
-                                            {Array.from(new Set(birdRecords.map(r => r.locationName))).sort().map((loc, idx) => (
-                                                <option key={idx} value={loc}>{loc}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                                        <div className="flex flex-wrap gap-1">
-                                            {['ALL', 'SEEN', 'UNSEEN', 'RARE', 'PRIORITY'].map(tab => (
-                                                <button key={tab} onClick={() => setStatusFilter(tab)} className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all ${statusFilter === tab ? 'bg-teal-500 text-slate-950' : 'bg-slate-950 text-slate-400 hover:text-white'}`}>{tab}</button>
-                                            ))}
-                                        </div>
-                                        <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                                            <span>Sort:</span>
-                                            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="bg-slate-950 border border-slate-800 rounded-lg text-slate-300 px-2.5 py-1 text-[10px]">
-                                                <option value="bird">Species</option>
-                                                <option value="location">Hotspot</option>
-                                                <option value="date">Date</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    
-                                    {/* Species filter reset banner */}
-                                    {selectedBird !== 'ALL' && (
-                                        <div className="bg-teal-950/40 border border-teal-500/20 rounded-xl p-3 flex justify-between items-center text-xs">
-                                            <span className="text-teal-400">Isolating target: <strong className="text-white">{selectedBird}</strong></span>
-                                            <button onClick={() => setSelectedBird('ALL')} className="text-rose-400 hover:underline font-bold">Clear Target Focus</button>
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-                                    <div className="divide-y divide-slate-800/60 max-h-[500px] overflow-y-auto">
-                                        {filteredRecords.length === 0 ? <div className="p-8 text-center text-slate-500 text-xs">No matching records.</div> : filteredRecords.map((r) => (
-                                            <div 
-                                                key={r.id} 
-                                                onClick={() => setSelectedBird(selectedBird === r.bird ? 'ALL' : r.bird)}
-                                                className={`p-3.5 flex items-center justify-between gap-4 text-xs transition duration-150 cursor-pointer ${
-                                                    selectedBird === r.bird ? 'bg-teal-950/20 border-l-4 border-teal-500' : 'hover:bg-slate-900/60'
-                                                }`}
-                                            >
-                                                <div className="flex items-center gap-3 min-w-0 flex-1">
-                                                    <BirdThumbnail birdName={r.bird} />
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="flex items-center gap-2 flex-wrap">
-                                                            <span className="font-extrabold text-white text-xs truncate">{r.bird}</span>
-                                                            {r.rare === 'Y' && <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded text-[8px] font-bold">★ Rare</span>}
-                                                            <span className="text-[9px] text-slate-500">{r.lastReported}</span>
-                                                        </div>
-                                                        <div className="text-slate-400 flex items-center gap-1.5 flex-wrap text-[11px] mt-0.5">
-                                                            <span>📍 {r.locationName}</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                
-                                                <div className="flex items-center gap-2 shrink-0">
-                                                    <a 
-                                                        href={getEBirdUrl(r.bird)} 
-                                                        target="_blank" 
-                                                        rel="noopener noreferrer"
-                                                        onClick={(e) => e.stopPropagation()} // Stop triggering row focus filter
-                                                        className="px-2.5 py-1 rounded bg-slate-950 hover:bg-slate-800 text-teal-400 border border-slate-800 text-[10px] font-bold tracking-tight transition"
-                                                    >
-                                                        eBird ↗
-                                                    </a>
-                                                    <button 
-                                                        onClick={(e) => { e.stopPropagation(); toggleSeen(r.bird); }} 
-                                                        className={`px-3 py-1 rounded border transition text-[10px] font-bold ${r.seen === 'Y' ? 'bg-teal-500/10 text-teal-400 border-teal-500/20' : 'bg-slate-900 text-slate-400 border-slate-800'}`}
-                                                    >
-                                                        {r.seen === 'Y' ? '✓ Seen' : 'Mark Seen'}
-                                                    </button>
-                                                    <button 
-                                                        onClick={(e) => { e.stopPropagation(); deleteRecord(r.id); }} 
-                                                        className="p-1.5 bg-slate-900 border border-slate-800 hover:text-red-400 rounded-lg text-slate-500 transition"
-                                                    >
-                                                        ✕
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </main>
-
-                    {isAddOpen && (
-                        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl">
-                                <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                                    <h3 className="text-xs font-extrabold uppercase text-teal-400 tracking-wider">New Entry</h3>
-                                    <button onClick={() => setIsAddOpen(false)} className="text-slate-400 text-sm font-black">✕</button>
-                                </div>
-                                <form onSubmit={handleAddSubmit} className="space-y-3.5 text-[11px]">
-                                    <div>
-                                        <label className="text-slate-400 block font-bold mb-1">Hotspot Name</label>
-                                        <input type="text" required placeholder="e.g. Race Point Base" value={newBird.locationName} onChange={(e) => setNewBird({ ...newBird, locationName: e.target.value })} className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-lg px-3 py-1.5 focus:outline-none"/>
-                                    </div>
-                                    <div>
-                                        <label className="text-slate-400 block font-bold mb-1">Coordinates (lat, lng)</label>
-                                        <div className="flex gap-2">
-                                            <input type="text" placeholder="e.g. 42.069, -70.238" value={newBird.coordinates} onChange={(e) => setNewBird({ ...newBird, coordinates: e.target.value })} className="flex-grow bg-slate-950 border border-slate-800 text-slate-100 rounded-lg px-3 py-1.5 focus:outline-none"/>
-                                            <button type="button" onClick={handleGetLocation} className="bg-teal-500 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs hover:bg-teal-400 transition" title="Auto-fill device GPS coordinates">📍 GPS</button>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className="text-slate-400 block font-bold mb-1">Species Name</label>
-                                        <input type="text" required placeholder="e.g. Common Murre" value={newBird.bird} onChange={(e) => setNewBird({ ...newBird, bird: e.target.value })} className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-lg px-3 py-1.5 focus:outline-none"/>
-                                    </div>
-                                    <div className="flex justify-end gap-2 pt-2">
-                                        <button type="button" onClick={() => setIsAddOpen(false)} className="bg-slate-800 text-slate-300 px-3 py-1.5 rounded-lg font-bold">Cancel</button>
-                                        <button type="submit" className="bg-teal-500 text-slate-950 px-4 py-1.5 rounded-lg font-bold hover:bg-teal-400 transition">Submit</button>
-                                    </div>
-                                </form>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            );
-        }
-
-        // Live image lookup utility component via Wikipedia summaries API
-        function BirdThumbnail({ birdName }) {
-            const [imgUrl, setImgUrl] = useState(null);
-            const [loading, setLoading] = useState(true);
-
-            useEffect(() => {
-                let active = true;
-                async function fetchImage() {
-                    try {
-                        const response = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(birdName)}`);
-                        if (!response.ok) throw new Error('Wiki summary lookup error');
-                        const data = await response.json();
-                        if (active) {
-                            if (data.thumbnail && data.thumbnail.source) {
-                                setImgUrl(data.thumbnail.source);
-                            }
-                            setLoading(false);
-                        }
-                    } catch (e) {
-                        if (active) setLoading(false);
-                    }
-                }
-                fetchImage();
-                return () => { active = false; };
-            }, [birdName]);
-
-            if (loading) {
-                return <div className="w-12 h-12 bg-slate-900 rounded-xl border border-slate-800/80 animate-pulse shrink-0" />;
-            }
-
-            if (imgUrl) {
-                return (
-                    <img 
-                        src={imgUrl} 
-                        alt={birdName} 
-                        className="w-12 h-12 object-cover rounded-xl border border-slate-800 shrink-0 shadow" 
-                        onError={(e) => { e.target.style.display = 'none'; }}
-                    />
-                );
-            }
-
-            return (
-                <div className="w-12 h-12 bg-slate-900 rounded-xl flex items-center justify-center shrink-0 border border-slate-800/80">
-                    <svg className="w-5 h-5 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                    </svg>
-                </div>
-            );
-        }
-
         function parseTSV(text) {
             const lines = text.trim().split('\n');
             const result = [];
@@ -1244,6 +425,220 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 return `${locCol}\t${coordCol}\t${r.bird}\t${r.rare}\t${r.lastReported}`;
             });
             return [header, ...rows].join('\n');
+        }
+
+        function parseCSVLine(line) {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                if (char === '"' || char === "'") {
+                    inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                    result.push(current.trim().replace(/^["']|["']$/g, ''));
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            result.push(current.trim().replace(/^["']|["']$/g, ''));
+            return result;
+        }
+
+        function App() {
+            const [rawData, setRawData] = useState(INITIAL_RAW_DATA);
+            const [pastedData, setPastedData] = useState('');
+            const [showSyncPanel, setShowSyncPanel] = useState(false);
+            
+            // Life List state
+            const [lifeListSet, setLifeListSpecies] = useState(new Set());
+            const [lifeListFileName, setLifeListFileName] = useState('');
+            const [manualSeenStates, setManualSeenStates] = useState({});
+
+            const [searchQuery, setSearchQuery] = useState('');
+            const [statusFilter, setStatusFilter] = useState('ALL'); 
+            const [selectedLocation, setSelectedLocation] = useState('ALL');
+            const [selectedBird, setSelectedBird] = useState('ALL');
+            const [sortBy, setSortBy] = useState('bird');
+            const [toastMsg, setToastMsg] = useState('');
+
+            const [deferredPrompt, setDeferredPrompt] = useState(null);
+            const [isInstallable, setIsInstallable] = useState(false);
+
+            const [basemapStyle, setBasemapStyle] = useState('dark');
+            const [mapReady, setMapReady] = useState(false);
+            const mapContainerRef = useRef(null);
+            const mapInstance = useRef(null);
+            const markerLayerGroup = useRef(null);
+
+            const [isAddOpen, setIsAddOpen] = useState(false);
+            const [newBird, setNewBird] = useState({
+                locationName: '', coordinates: '', bird: '', rare: 'N', lastReported: 'Thursday, July 9, 2026'
+            });
+
+            useEffect(() => {
+                window.addEventListener('beforeinstallprompt', (e) => {
+                    e.preventDefault();
+                    setDeferredPrompt(e);
+                    setIsInstallable(true);
+                });
+            }, []);
+
+            const handleInstallApp = async () => {
+                if (!deferredPrompt) return;
+                deferredPrompt.prompt();
+                const { outcome } = await deferredPrompt.userChoice;
+                if (outcome === 'accepted') setDeferredPrompt(null);
+            };
+
+            const birdRecords = useMemo(() => {
+                try {
+                    const rawRecords = parseTSV(rawData);
+                    return rawRecords.map(r => {
+                        const isSeen = lifeListSet.has(r.bird.toLowerCase()) || !!manualSeenStates[r.bird.toLowerCase()];
+                        return { ...r, seen: isSeen ? 'Y' : 'N' };
+                    });
+                } catch (e) { return []; }
+            }, [rawData, lifeListSet, manualSeenStates]);
+
+            const stats = useMemo(() => {
+                const total = birdRecords.length;
+                const seenCount = birdRecords.filter(r => r.seen === 'Y').length;
+                const rareCount = birdRecords.filter(r => r.rare === 'Y').length;
+                const priorityCount = birdRecords.filter(r => r.rare === 'Y' && r.seen === 'N').length;
+                return { total, seenCount, unseenCount: total - seenCount, seenPercentage: total > 0 ? Math.round((seenCount / total) * 100) : 0, rareCount, priorityCount };
+            }, [birdRecords]);
+
+            const toggleSeen = (birdName) => {
+                const key = birdName.toLowerCase();
+                const isCurrentlySeen = lifeListSet.has(key) || !!manualSeenStates[key];
+                setManualSeenStates(prev => ({ ...prev, [key]: !isCurrentlySeen }));
+                showToast(`${birdName} seen status updated.`);
+            };
+
+            const deleteRecord = (id) => {
+                const updated = birdRecords.filter(rec => rec.id !== id);
+                setRawData(recordsToTSV(updated));
+                showToast("Entry deleted.");
+            };
+
+            const filteredRecords = useMemo(() => {
+                return birdRecords.filter(r => {
+                    const matchesSearch = r.bird.toLowerCase().includes(searchQuery.toLowerCase()) || r.locationName.toLowerCase().includes(searchQuery.toLowerCase());
+                    const matchesLocation = selectedLocation === 'ALL' || r.locationName === selectedLocation;
+                    const matchesBirdSelection = selectedBird === 'ALL' || r.bird === selectedBird;
+
+                    if (!matchesSearch || !matchesLocation || !matchesBirdSelection) return false;
+
+                    if (statusFilter === 'SEEN') return r.seen === 'Y';
+                    if (statusFilter === 'UNSEEN') return r.seen === 'N';
+                    if (statusFilter === 'RARE') return r.rare === 'Y';
+                    if (statusFilter === 'PRIORITY') return r.rare === 'Y' && r.seen === 'N';
+                    return true;
+                });
+            }, [birdRecords, searchQuery, statusFilter, selectedLocation, selectedBird, sortBy]);
+
+            const mapLocations = useMemo(() => {
+                const locMap = {};
+                filteredRecords.forEach(r => {
+                    if (!locMap[r.locationName]) locMap[r.locationName] = { name: r.locationName, coords: r.coordinates, total: 0, seen: 0, unseenRares: 0, isActive: true };
+                    const item = locMap[r.locationName];
+                    item.total += 1;
+                    if (r.seen === 'Y') item.seen += 1;
+                    if (r.rare === 'Y' && r.seen === 'N') item.unseenRares += 1;
+                });
+                return Object.values(locMap);
+            }, [filteredRecords]);
+
+            // Map init
+            useEffect(() => {
+                if (!mapContainerRef.current || mapInstance.current) return;
+                const map = L.map(mapContainerRef.current, { zoomControl: false }).setView([41.80, -70.30], 10);
+                mapInstance.current = map;
+                markerLayerGroup.current = L.layerGroup().addTo(map);
+                L.control.zoom({ position: 'topright' }).addTo(map);
+                setMapReady(true);
+            }, []);
+
+            // Basemap style handler
+            useEffect(() => {
+                if (!mapInstance.current || !mapReady) return;
+                mapInstance.current.eachLayer(l => { if (l instanceof L.TileLayer) mapInstance.current.removeLayer(l); });
+                let url = basemapStyle === 'streets' ? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png' : basemapStyle === 'satellite' ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+                L.tileLayer(url).addTo(mapInstance.current);
+            }, [basemapStyle, mapReady]);
+
+            // Marker rendering
+            useEffect(() => {
+                if (!mapInstance.current || !markerLayerGroup.current || !mapReady) return;
+                markerLayerGroup.current.clearLayers();
+                mapLocations.forEach(loc => {
+                    if (!loc.coords) return;
+                    const [lat, lng] = loc.coords.split(',').map(Number);
+                    const marker = L.circleMarker([lat, lng], { radius: 8, fillColor: loc.unseenRares > 0 ? '#f59e0b' : '#10b981', fillOpacity: 0.8, color: '#fff', weight: 1 }).addTo(markerLayerGroup.current);
+                    marker.bindPopup(`<h4 class="font-bold">${loc.name}</h4><p>${loc.seen}/${loc.total} seen</p>`).on('click', () => setSelectedLocation(loc.name));
+                });
+            }, [mapLocations, mapReady]);
+
+            return (
+                <div className="flex flex-col min-h-screen bg-slate-950 text-slate-100">
+                    <header className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900 sticky top-0 z-50">
+                        <div>
+                            <h1 className="text-lg font-black text-teal-400">CAPE COD BIRD SIGHTINGS</h1>
+                            <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Interactive Cape Code Bird Sighting Portal</p>
+                        </div>
+                        <div className="flex gap-2">
+                             {isInstallable && <button onClick={handleInstallApp} className="bg-emerald-500 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-bold">Install</button>}
+                            <button onClick={() => setIsAddOpen(true)} className="bg-teal-500 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-bold">+</button>
+                        </div>
+                    </header>
+
+                    <main className="p-4 space-y-6">
+                        <section className="bg-slate-900 rounded-2xl h-64 overflow-hidden shadow-inner border border-slate-800 relative">
+                            <div ref={mapContainerRef} className="w-full h-full" />
+                        </section>
+
+                        <div className="bg-slate-900 p-4 rounded-2xl space-y-4">
+                            <input type="text" placeholder="Search..." onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm" />
+                            <div className="flex gap-2 overflow-x-auto pb-2">
+                                {['ALL', 'SEEN', 'UNSEEN', 'RARE', 'PRIORITY'].map(f => (
+                                    <button key={f} onClick={() => setStatusFilter(f)} className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap ${statusFilter === f ? 'bg-teal-500 text-slate-950' : 'bg-slate-800'}`}>{f}</button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {filteredRecords.map(r => (
+                            <div key={r.id} onClick={() => setSelectedBird(r.bird === selectedBird ? 'ALL' : r.bird)} className={`p-4 rounded-xl border ${selectedBird === r.bird ? 'border-teal-500' : 'border-slate-800'} flex justify-between items-center`}>
+                                <div className="flex items-center gap-3">
+                                    <BirdThumbnail birdName={r.bird} />
+                                    <div>
+                                        <div className="font-bold">{r.bird}</div>
+                                        <div className="text-xs text-slate-400">{r.locationName}</div>
+                                    </div>
+                                </div>
+                                <div className="flex gap-2">
+                                    <a href={getEBirdUrl(r.bird)} target="_blank" className="bg-slate-800 px-3 py-1 rounded-lg text-xs font-bold">eBird ↗</a>
+                                    <button onClick={(e) => { e.stopPropagation(); toggleSeen(r.bird); }} className={`px-3 py-1 rounded-lg text-xs font-bold ${r.seen === 'Y' ? 'bg-teal-500/20 text-teal-300' : 'bg-slate-800'}`}>
+                                        {r.seen === 'Y' ? '✓ Seen' : 'Mark'}
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </main>
+                </div>
+            );
+        }
+
+        function BirdThumbnail({ birdName }) {
+            const [imgUrl, setImgUrl] = useState(null);
+            useEffect(() => {
+                fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(birdName)}`)
+                    .then(r => r.json())
+                    .then(data => { if(data.thumbnail) setImgUrl(data.thumbnail.source); })
+                    .catch(() => {});
+            }, [birdName]);
+            return imgUrl ? <img src={imgUrl} className="w-12 h-12 rounded-lg object-cover" /> : <div className="w-12 h-12 bg-slate-800 rounded-lg" />;
         }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
