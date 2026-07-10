@@ -517,9 +517,18 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     if (customDateTo && recordDate > new Date(new Date(customDateTo).setHours(23, 59, 59, 999))) return false;
                     return true;
                 }
-                const days = dateRangeFilter === '24H' ? 1 : dateRangeFilter === '7D' ? 7 : 30;
-                const cutoff = new Date();
-                cutoff.setDate(cutoff.getDate() - days);
+                // "Last Reported" is stored as a calendar date only (no time-of-day — see
+                // formatLongDate), so an evening sighting parses to that day's midnight. Comparing
+                // against a precise "now minus N hours" cutoff would unfairly discount anything
+                // reported later in the day (it could lose up to ~23 hours of "freshness"), which
+                // made "Last 24h" show nothing even when today's sightings existed. Compare by
+                // calendar day instead — the actual precision this data has: "24h" = today,
+                // "7d"/"30d" = today plus the preceding N-1 calendar days.
+                const now = new Date();
+                const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const daysBack = dateRangeFilter === '24H' ? 0 : dateRangeFilter === '7D' ? 6 : 29;
+                const cutoff = new Date(startOfToday);
+                cutoff.setDate(cutoff.getDate() - daysBack);
                 return recordDate >= cutoff;
             };
             
@@ -600,15 +609,15 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 const priorityCount = enrichedRecords.filter(r => r.rare === 'Y' && r.seen === 'N').length;
                 const uniqueSpots = new Set(enrichedRecords.map(r => r.locationName)).size;
 
-                // Today's Targets: unseen rares reported in the last 24h — the actionable,
-                // time-sensitive subset. Computed against "now" regardless of whatever date
-                // filter is currently active in the UI, so the button/banner is always accurate.
-                const dayAgo = new Date();
-                dayAgo.setDate(dayAgo.getDate() - 1);
+                // Today's Targets: unseen rares reported today — the actionable, time-sensitive
+                // subset. Uses the same calendar-day comparison as the "Last 24h" date filter
+                // (see isWithinDateRange) since "Last Reported" is date-only, no time-of-day.
+                const now = new Date();
+                const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
                 const todayTargets = enrichedRecords.filter(r => {
                     if (r.rare !== 'Y' || r.seen !== 'N') return false;
                     const d = new Date(r.lastReported || 0);
-                    return !isNaN(d) && d >= dayAgo;
+                    return !isNaN(d) && d >= startOfToday;
                 });
 
                 return {
@@ -983,6 +992,25 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             const showToast = (msg) => {
                 setToastMsg(msg);
                 setTimeout(() => setToastMsg(''), 3000);
+            };
+
+            // "Home" — resets the map view. Fits bounds to whatever hotspots are currently
+            // active (matching the present filters) rather than a hardcoded view, so it stays
+            // useful after filtering down to a region/date range; falls back to the original
+            // full-Cape default view if nothing is active to fit to. Also clears a single-hotspot
+            // focus, since "home" implies backing out of that.
+            const handleGoHome = () => {
+                if (!mapInstance.current) return;
+                setSelectedLocation('ALL');
+                const bounds = mapLocations
+                    .filter(l => l.isActive && l.coords)
+                    .map(l => l.coords.split(',').map(parseFloat))
+                    .filter(([lat, lng]) => !isNaN(lat) && !isNaN(lng));
+                if (bounds.length > 0) {
+                    mapInstance.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 13 });
+                } else {
+                    mapInstance.current.setView([41.80, -70.30], 10);
+                }
             };
 
             // --- Export: current filtered list as a downloadable CSV -------------------------
@@ -1556,6 +1584,15 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                             className="absolute top-3 left-3 z-[500] bg-slate-950/90 border border-slate-800 hover:border-teal-500 disabled:opacity-60 rounded-xl px-3 py-2 text-[11px] font-bold text-slate-200 hover:text-teal-400 backdrop-blur-sm transition flex items-center gap-1.5 shadow-lg"
                                         >
                                             <span>{locating ? '⏳' : '📍'}</span> {locating ? 'Locating…' : 'Find Me'}
+                                        </button>
+                                    )}
+                                    {mapReady && (
+                                        <button
+                                            onClick={handleGoHome}
+                                            title="Reset the map view"
+                                            className="absolute top-[76px] right-3 z-[500] w-[30px] h-[30px] flex items-center justify-center bg-slate-950/90 border border-slate-800 hover:border-teal-500 rounded-md text-slate-200 hover:text-teal-400 backdrop-blur-sm transition shadow-lg text-sm"
+                                        >
+                                            🏠
                                         </button>
                                     )}
                                     {!mapReady && (
