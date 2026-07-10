@@ -334,95 +334,39 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
         ];
 
         // Direct common name to exact eBird species code conversion map (fixed with user corrections)
-        const EBIRD_CODE_MAP = {
+        // Small curated fallback map, used only until the live eBird taxonomy has been
+        // synced (see Settings > eBird API Key). Kept intentionally short — hand-typed
+        // species code lists are exactly how wrong/missing links happen at scale, which is
+        // why the app prefers the live taxonomy sync below for anything beyond these basics.
+        const STATIC_EBIRD_CODE_MAP = {
             "Canada Goose": "cangoo",
-            "Mute Swan": "mutswa",
             "Mallard": "mallar3",
             "Mourning Dove": "moudo1",
-            "Great Egret": "greegr",
             "Great Blue Heron": "gbhero",
-            "Red-bellied Woodpecker": "rebwoo",
             "Red-tailed Hawk": "rthawk",
-            "Chimney Swift": "chiswi",
-            "Belted Kingfisher": "belkin1",
-            "Surf Scoter": "sursco",
-            "Rock Pigeon": "rocpig",
-            "Roseate Tern": "roster",
-            "Snowy Egret": "snoegr",
-            "Black-crowned Night Heron": "bcnhre",
             "Osprey": "osprey",
-            "Northern Harrier": "norhar",
-            "Eastern Phoebe": "easpho",
-            "Wood Duck": "wooduc",
-            "Yellow-crowned Night Heron": "ycnhre",
-            "American Black Duck": "ambduc",
             "Killdeer": "killde",
-            "Least Sandpiper": "leasan",
-            "Laughing Gull": "laugul",
-            "Downy Woodpecker": "dowwoo",
-            "Northern Flicker": "norfli",
-            "Eastern Wood-Pewee": "eawope",
-            "Red-breasted Merganser": "rebmer",
-            "Spotted Sandpiper": "sposan",
             "Common Loon": "comloo",
-            "Green Heron": "greher",
-            "Semipalmated Plover": "semplo",
-            "Piping Plover": "pipplo",
-            "Short-billed Dowitcher": "shbdow",
-            "Semipalmated Sandpiper": "semsan",
-            "Little Blue Heron": "libher",
-            "Hairy Woodpecker": "haiwoo",
-            "Ring-billed Gull": "ribgul",
             "Double-crested Cormorant": "doccor",
-            "Common Eider": "comeid",
-            "Black Scoter": "blksco",
-            "American Oystercatcher": "ameoys",
-            "Hudsonian Whimbrel": "hudwhi",
-            "Lesser Yellowlegs": "lesyel",
-            "Bonaparte's Gull": "bongul",
-            "Great Black-backed Gull": "gbbgul",
-            "Bridled Tern": "briter1",
-            "Forster's Tern": "forter",
-            "Red-throated Loon": "retloo",
-            "Wilson's Storm-Petrel": "wispet",
-            "Cory's Shearwater": "corshe",
-            "Great Shearwater": "greshe",
-            "Sooty Shearwater": "sooshe",
-            "Manx Shearwater": "manshe",
-            "Northern Gannet": "norgan",
-            "Long-tailed Jaeger": "lotjae", // Updated
-            "South Polar Skua": "sopsku1", // Updated
-            "White-winged Scoter": "wwscot",
-            "Lesser Black-backed Gull": "lbbgul",
-            "Iceland Gull": "icegul",
-            "Black Tern": "blkter",
-            "Arctic Tern": "arcter",
-            "Wild Turkey": "wiltur",
-            "Black-billed Cuckoo": "bibcuc",
-            "Broad-winged Hawk": "brwhaw",
-            "Willet (Eastern)": "willet1",
-            "Willet": "willet1",
-            "Greater Yellowlegs": "greyel",
-            "Least Tern": "leater1",
-            "Common Tern": "comter",
-            "Glossy Ibis": "gloibi",
-            "Eastern Whip-poor-will": "ewpwil",
             "Turkey Vulture": "turvul",
-            "Red-shouldered Hawk": "reshaw",
-            "Ruby-throated Hummingbird": "rthhum",
-            "Willow Flycatcher": "wilfly",
-            "Swallow-tailed Kite": "stkite",
-            "Cooper's Hawk": "coohaw",
             "Bald Eagle": "baleag",
-            "Barred Owl": "barowl",
-            "Ruby-crowned Kinglet": "ruckin"
+            "Ruby-throated Hummingbird": "rthhum"
         };
 
-        function getEBirdUrl(birdName) {
+        // Resolves a bird's eBird species page URL. Prefers the live taxonomy map (synced
+        // from eBird's official /ref/taxonomy/ebird endpoint — see Settings), falls back to
+        // the small static map above, and only falls back to a plain search link if neither
+        // has a match (e.g. taxonomy hasn't been synced yet, or the name doesn't resolve).
+        function getEBirdUrl(birdName, taxonomyMap) {
             const cleanName = birdName.trim();
-            const code = EBIRD_CODE_MAP[cleanName];
-            if (code) {
-                return `https://ebird.org/species/${code}`;
+            const normalized = normalizeBirdName(cleanName);
+            const liveCode = taxonomyMap && (taxonomyMap[normalized] || taxonomyMap[cleanName.toLowerCase()]);
+            if (liveCode) {
+                return `https://ebird.org/species/${liveCode}`;
+            }
+            const staticCode = STATIC_EBIRD_CODE_MAP[cleanName];
+            if (staticCode) {
+                return `https://ebird.org/species/${staticCode}`;
             }
             return `https://ebird.org/search?q=${encodeURIComponent(cleanName)}`;
         }
@@ -456,6 +400,26 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             useEffect(() => { storageSet('cbc_seenOverrides', seenOverrides); }, [seenOverrides]);
 
             const lifeListSet = useMemo(() => new Set(lifeList.map(normalizeBirdName)), [lifeList]);
+
+            // --- eBird API integration (species codes + daily region sightings) --------------
+            // The key is seeded with the one you gave us so the app works immediately; it's
+            // stored in localStorage from then on (not hardcoded elsewhere) and can be changed
+            // any time in Settings. Note this file will contain that key in plain text — treat
+            // it like any personal credential and don't publish/share this file publicly.
+            const [ebirdApiKey, setEbirdApiKey] = useState(() => storageGet('cbc_ebirdApiKey', 'l531bs6l4t92'));
+            const [ebirdRegion, setEbirdRegion] = useState(() => storageGet('cbc_ebirdRegion', 'US-MA-001')); // Barnstable County, MA
+            const [taxonomyMap, setTaxonomyMap] = useState(() => storageGet('cbc_taxonomyMap', {}));
+            const [taxonomySyncedAt, setTaxonomySyncedAt] = useState(() => storageGet('cbc_taxonomySyncedAt', null));
+            const [ebirdSyncedAt, setEbirdSyncedAt] = useState(() => storageGet('cbc_ebirdSyncedAt', null));
+            const [isSyncing, setIsSyncing] = useState(false);
+            const [syncError, setSyncError] = useState('');
+            const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+
+            useEffect(() => { storageSet('cbc_ebirdApiKey', ebirdApiKey); }, [ebirdApiKey]);
+            useEffect(() => { storageSet('cbc_ebirdRegion', ebirdRegion); }, [ebirdRegion]);
+            useEffect(() => { storageSet('cbc_taxonomyMap', taxonomyMap); }, [taxonomyMap]);
+            useEffect(() => { storageSet('cbc_taxonomySyncedAt', taxonomySyncedAt); }, [taxonomySyncedAt]);
+            useEffect(() => { storageSet('cbc_ebirdSyncedAt', ebirdSyncedAt); }, [ebirdSyncedAt]);
 
             // Effective seen status for a record: a manual override (if any) wins, otherwise
             // it's derived from whether the bird is on the life list.
@@ -816,6 +780,88 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             };
 
             // --- Import: eBird life list CSV -------------------------------------------------
+            // --- eBird API: species code taxonomy sync ---------------------------------------
+            // Downloads eBird's official species taxonomy once (comName -> speciesCode for
+            // every species) so every "eBird ↗" link points at the correct species page,
+            // including birds added later that were never hand-mapped. Taxonomy only changes
+            // once a year (each August), so this is skipped if synced within the last 30 days.
+            const fetchTaxonomyMap = async (key) => {
+                const res = await fetch('https://api.ebird.org/v2/ref/taxonomy/ebird?fmt=json&cat=species&locale=en', {
+                    headers: { 'x-ebirdapitoken': key }
+                });
+                if (!res.ok) throw new Error(`Taxonomy sync failed (HTTP ${res.status})`);
+                const data = await res.json();
+                const map = {};
+                data.forEach(t => {
+                    if (t.comName && t.speciesCode) map[normalizeBirdName(t.comName)] = t.speciesCode;
+                });
+                return map;
+            };
+
+            // --- eBird API: daily region sightings (recent + notable/rare) -------------------
+            // Pulls both feeds for the configured region (default Barnstable County, MA) and
+            // returns them in the same shape mergeReportEntries expects. Notable/rare results
+            // are tagged rare='Y'; everything else rare='N' (mergeReportEntries keeps 'Y' if a
+            // bird was already flagged rare from an earlier import).
+            const fetchRegionSightings = async (key, regionCode) => {
+                const headers = { 'x-ebirdapitoken': key };
+                const [recentRes, notableRes] = await Promise.all([
+                    fetch(`https://api.ebird.org/v2/data/obs/${regionCode}/recent?back=14&fmt=json`, { headers }),
+                    fetch(`https://api.ebird.org/v2/data/obs/${regionCode}/recent/notable?back=30&fmt=json`, { headers })
+                ]);
+                if (!recentRes.ok) throw new Error(`Recent sightings fetch failed (HTTP ${recentRes.status})`);
+                if (!notableRes.ok) throw new Error(`Notable sightings fetch failed (HTTP ${notableRes.status})`);
+                const [recent, notable] = await Promise.all([recentRes.json(), notableRes.json()]);
+
+                const notableKeys = new Set(notable.map(o => `${o.locId}|${o.speciesCode}`));
+                const toEntry = (o) => ({
+                    locationName: o.locName || 'Unknown Location',
+                    coordinates: (o.lat != null && o.lng != null) ? `${o.lat}, ${o.lng}` : '',
+                    bird: o.comName,
+                    rare: notableKeys.has(`${o.locId}|${o.speciesCode}`) ? 'Y' : 'N',
+                    lastReported: formatLongDate(new Date((o.obsDt || '').replace(' ', 'T')))
+                });
+                return [...recent, ...notable].filter(o => o.comName && o.locName).map(toEntry);
+            };
+
+            // Runs a full sync: taxonomy (if stale/empty) + today's region sightings, merged
+            // into the existing dataset. Called on load once a day automatically, and any time
+            // from the "Sync Now" button in Settings.
+            const runEbirdSync = async ({ silent = false } = {}) => {
+                if (!ebirdApiKey) {
+                    if (!silent) showToast("Add your eBird API key in Settings first.");
+                    return;
+                }
+                setIsSyncing(true);
+                setSyncError('');
+                try {
+                    const taxonomyStale = !taxonomySyncedAt || (Date.now() - taxonomySyncedAt > 30 * 24 * 60 * 60 * 1000) || Object.keys(taxonomyMap).length === 0;
+                    if (taxonomyStale) {
+                        const map = await fetchTaxonomyMap(ebirdApiKey);
+                        setTaxonomyMap(map);
+                        setTaxonomySyncedAt(Date.now());
+                    }
+                    const entries = await fetchRegionSightings(ebirdApiKey, ebirdRegion);
+                    mergeReportEntries(entries, { silent: true });
+                    setEbirdSyncedAt(Date.now());
+                    if (!silent) showToast(`Synced with eBird — ${entries.length} sightings checked for ${ebirdRegion}.`);
+                } catch (err) {
+                    const msg = err && err.message ? err.message : 'Sync failed';
+                    setSyncError(msg);
+                    if (!silent) showToast(`eBird sync failed: ${msg}`);
+                } finally {
+                    setIsSyncing(false);
+                }
+            };
+
+            // Auto-sync once per day on load, if a key is present.
+            useEffect(() => {
+                if (ebirdApiKey && (!ebirdSyncedAt || Date.now() - ebirdSyncedAt > 24 * 60 * 60 * 1000)) {
+                    runEbirdSync({ silent: true });
+                }
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+            }, []);
+
             const handleLifeListFile = async (e) => {
                 const file = e.target.files?.[0];
                 e.target.value = ''; // allow re-selecting the same file later
@@ -838,9 +884,9 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
             // Merges new/updated sightings into the existing dataset rather than replacing it,
             // so hotspots and species not present in the uploaded report are kept, and manual
             // seen overrides (keyed by location+bird) are untouched.
-            const mergeReportEntries = (entries) => {
+            const mergeReportEntries = (entries, { silent = false } = {}) => {
                 if (entries.length === 0) {
-                    showToast("No recognizable sighting rows found in that file.");
+                    if (!silent) showToast("No recognizable sighting rows found in that file.");
                     return;
                 }
                 const byKey = new Map(birdRecords.map(r => [`${r.locationName}|${r.bird}`.toLowerCase(), r]));
@@ -871,7 +917,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 });
                 const merged = Array.from(byKey.values()).sort((a, b) => a.locationName.localeCompare(b.locationName));
                 setRawData(recordsToTSV(merged));
-                showToast(`Report merged — ${added} new, ${updated} updated. Seen status recalculated from your life list.`);
+                if (!silent) showToast(`Report merged — ${added} new, ${updated} updated. Seen status recalculated from your life list.`);
             };
 
             const handleReportFile = async (e) => {
@@ -927,6 +973,10 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                 <button onClick={() => setIsAddOpen(true)} className="bg-teal-500 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs shadow-lg hover:bg-teal-400 transition">+ Sighting</button>
                                 <button onClick={() => { setPastedData(rawData); setShowSyncPanel(!showSyncPanel); }} className="bg-slate-800 text-slate-300 border border-slate-700 font-semibold px-4 py-2 rounded-xl text-xs hover:bg-slate-700 transition">Sync TSV</button>
                                 <button onClick={() => setShowImportPanel(!showImportPanel)} className="bg-slate-800 text-slate-300 border border-slate-700 font-semibold px-4 py-2 rounded-xl text-xs hover:bg-slate-700 transition">Import</button>
+                                <button onClick={() => setShowSettingsPanel(!showSettingsPanel)} className="bg-slate-800 text-slate-300 border border-slate-700 font-semibold px-4 py-2 rounded-xl text-xs hover:bg-slate-700 transition relative">
+                                    Settings
+                                    {isSyncing && <span className="absolute -top-1 -right-1 w-2 h-2 bg-teal-400 rounded-full animate-ping" />}
+                                </button>
                                 <input ref={lifeListFileRef} type="file" accept=".csv" onChange={handleLifeListFile} className="hidden" />
                                 <input ref={reportFileRef} type="file" accept=".docx,.txt,.tsv" onChange={handleReportFile} className="hidden" />
                             </div>
@@ -934,6 +984,53 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                     </header>
 
                     <main className="max-w-7xl mx-auto px-4 py-6 md:px-8 flex-1 w-full space-y-6">
+                        {showSettingsPanel && (
+                            <div className="bg-slate-900 border border-teal-500/30 rounded-2xl p-5 space-y-4 shadow-xl">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="text-sm font-bold text-teal-400">eBird API Settings</h3>
+                                    <button onClick={() => setShowSettingsPanel(false)} className="text-slate-400 text-xs px-2 hover:text-white">Close</button>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="space-y-1.5">
+                                        <label className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">eBird API Key</label>
+                                        <input
+                                            type="text"
+                                            value={ebirdApiKey}
+                                            onChange={(e) => setEbirdApiKey(e.target.value.trim())}
+                                            placeholder="e.g. l531bs6l4t92"
+                                            className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none"
+                                        />
+                                        <p className="text-[9px] text-slate-500">Used for accurate eBird species links and daily sighting sync. Get a free key at ebird.org/api/keygen. Stored only on this device.</p>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <label className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">eBird Region Code</label>
+                                        <input
+                                            type="text"
+                                            value={ebirdRegion}
+                                            onChange={(e) => setEbirdRegion(e.target.value.trim())}
+                                            placeholder="US-MA-001"
+                                            className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none"
+                                        />
+                                        <p className="text-[9px] text-slate-500">Default is Barnstable County, MA (US-MA-001). Find other region codes on eBird's Explore page URL.</p>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-[10px] text-slate-400">
+                                    <div className="space-y-0.5">
+                                        <div>Species codes synced: <strong className="text-teal-400">{Object.keys(taxonomyMap).length}</strong>{taxonomySyncedAt ? ` (as of ${new Date(taxonomySyncedAt).toLocaleDateString()})` : ' (not yet synced)'}</div>
+                                        <div>Region sightings last synced: <strong className="text-teal-400">{ebirdSyncedAt ? new Date(ebirdSyncedAt).toLocaleString() : 'never'}</strong></div>
+                                        {syncError && <div className="text-rose-400">Last sync error: {syncError}</div>}
+                                    </div>
+                                    <button
+                                        onClick={() => runEbirdSync({ silent: false })}
+                                        disabled={isSyncing}
+                                        className="bg-teal-500 disabled:opacity-50 text-slate-950 font-bold px-4 py-1.5 rounded-lg text-xs hover:bg-teal-400 transition"
+                                    >
+                                        {isSyncing ? 'Syncing…' : 'Sync Now'}
+                                    </button>
+                                </div>
+                                <p className="text-[9px] text-slate-500">Auto-syncs once a day whenever this page is opened (this is a static PWA with no server, so it can't run in the background — opening the app is what triggers the daily check). Pulls both recent and notable/rare sightings for your region and merges them in without touching existing entries or manual seen overrides.</p>
+                            </div>
+                        )}
                         {showImportPanel && (
                             <div className="bg-slate-900 border border-teal-500/30 rounded-2xl p-5 space-y-4 shadow-xl">
                                 <div className="flex justify-between items-center">
@@ -1173,7 +1270,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                                 
                                                 <div className="flex items-center gap-2 shrink-0">
                                                     <a 
-                                                        href={getEBirdUrl(r.bird)} 
+                                                        href={getEBirdUrl(r.bird, taxonomyMap)} 
                                                         target="_blank" 
                                                         rel="noopener noreferrer"
                                                         onClick={(e) => e.stopPropagation()} // Stop triggering row focus filter
@@ -1356,6 +1453,11 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
 
         // Strips parenthetical subspecies/form qualifiers and normalizes case for matching,
         // e.g. "Willet (Eastern)" -> "willet", so life-list comparisons aren't thrown off by them.
+        // Formats a Date as "Thursday, July 9, 2026" to match this app's Last Reported style.
+        function formatLongDate(dt) {
+            return isNaN(dt) ? '' : dt.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        }
+
         function normalizeBirdName(name) {
             return (name || "").replace(/\s*\([^)]*\)\s*/g, "").trim().toLowerCase();
         }
@@ -1421,7 +1523,7 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                         bird: bird.trim(),
                         rare: 'Y',
                         dt,
-                        lastReported: isNaN(dt) ? dateStr : dt.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+                        lastReported: isNaN(dt) ? dateStr : formatLongDate(dt)
                     });
                 }
             }
