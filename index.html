@@ -627,6 +627,29 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                 };
             }, [enrichedRecords]);
 
+            // Visible diagnostics for the date filter — shows the actual counts per bucket and
+            // what "today" the app is computing, directly in the UI, rather than requiring dev
+            // tools. If "Today" reads 0 here even though you know there's fresh data, the bug is
+            // in the underlying dates (or there genuinely isn't any data dated today); if it
+            // reads correctly here but the filtered list is still empty, the bug is elsewhere
+            // (another active filter, most likely) rather than in date parsing itself.
+            const dateDiagnostics = useMemo(() => {
+                const now = new Date();
+                const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const weekAgo = new Date(startOfToday); weekAgo.setDate(weekAgo.getDate() - 6);
+                const monthAgo = new Date(startOfToday); monthAgo.setDate(monthAgo.getDate() - 29);
+                const counts = { today: 0, week: 0, month: 0, unparseable: 0, sample: [] };
+                enrichedRecords.forEach(r => {
+                    const d = parseFlexibleDate(r.lastReported);
+                    if (isNaN(d)) { counts.unparseable++; return; }
+                    if (d >= startOfToday) counts.today++;
+                    if (d >= weekAgo) counts.week++;
+                    if (d >= monthAgo) counts.month++;
+                    if (counts.sample.length < 3) counts.sample.push(r.lastReported);
+                });
+                return { ...counts, todayLabel: formatLongDate(now) };
+            }, [enrichedRecords]);
+
             const updateRecord = (id, field, value) => {
                 const updated = birdRecords.map(rec => {
                     if (rec.id === id) return { ...rec, [field]: value };
@@ -1772,6 +1795,10 @@ Holly Ridge Golf Course	41.682949, -70.455092	Ruby-crowned Kinglet	Y	Thursday, J
                                             )}
                                         </div>
                                         <button onClick={handleExportCSV} title="Export current filtered list as CSV" className="bg-slate-950 border border-slate-800 hover:border-teal-500 hover:text-teal-400 text-slate-400 px-3 py-1 rounded-lg text-[10px] font-bold transition">⬇ Export CSV</button>
+                                    </div>
+                                    <div className="text-[9px] text-slate-500 font-mono pt-0.5">
+                                        App considers "today" to be {dateDiagnostics.todayLabel} · matching: {dateDiagnostics.today} today, {dateDiagnostics.week} this week, {dateDiagnostics.month} this month{dateDiagnostics.unparseable > 0 ? `, ${dateDiagnostics.unparseable} unparseable` : ''} (of {enrichedRecords.length} total)
+                                        {dateDiagnostics.sample.length > 0 && ` — sample dates: ${dateDiagnostics.sample.join(' | ')}`}
                                     </div>
                                     
                                     {/* Species filter reset banner */}
