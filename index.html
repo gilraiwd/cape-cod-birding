@@ -274,6 +274,15 @@
             // left, but only ever merge on explicit confirmation.
             const [selectedMergeNames, setSelectedMergeNames] = useState(() => new Set());
             const [mergeCanonicalName, setMergeCanonicalName] = useState('');
+            // Tracks what got merged into what, and a full snapshot of each source hotspot's
+            // records exactly as they were right before merging — the only way "Unmerge" can
+            // actually restore the original hotspots later, since the merge itself renames and
+            // dedupes records in a way that isn't otherwise reversible. Keyed by the current
+            // (possibly since-renamed) canonical name.
+            const [mergeHistory, setMergeHistory] = useState(() => storageGetObject('cbc_mergeHistory', {}));
+            useEffect(() => { storageSet('cbc_mergeHistory', mergeHistory); }, [mergeHistory]);
+            const [editingMergeName, setEditingMergeName] = useState(null);
+            const [editingMergeNameDraft, setEditingMergeNameDraft] = useState('');
 
             const locationCoreTokens = (name) => {
                 const base = name.split(',')[0]; // drop a trailing ", Town" clause
@@ -325,6 +334,31 @@
                     const rec = birdRecords.find(r => r.locationName === n && r.coordinates);
                     if (rec) { canonicalCoords = rec.coordinates; break; }
                 }
+
+                // Build the merge-history entry for `canonical`. If any selected name was
+                // itself already a merged hotspot, pull in ITS original sources/snapshot rather
+                // than just its current (already-merged) rows — so unmerge always restores the
+                // true original hotspots, however many merges deep this one is.
+                let combinedSources = [];
+                let combinedSnapshot = [];
+                const consumedKeys = [];
+                names.forEach(n => {
+                    if (mergeHistory[n]) {
+                        combinedSources.push(...mergeHistory[n].sourceNames);
+                        combinedSnapshot.push(...mergeHistory[n].snapshot);
+                        consumedKeys.push(n);
+                    } else {
+                        combinedSources.push(n);
+                        combinedSnapshot.push(...birdRecords.filter(r => r.locationName === n).map(r => ({ ...r })));
+                    }
+                });
+                setMergeHistory(prev => {
+                    const next = { ...prev };
+                    consumedKeys.forEach(k => delete next[k]);
+                    next[canonical] = { sourceNames: Array.from(new Set(combinedSources)), snapshot: combinedSnapshot, mergedAt: Date.now() };
+                    return next;
+                });
+
                 const renamed = birdRecords.map(r =>
                     names.includes(r.locationName) ? { ...r, locationName: canonical, coordinates: canonicalCoords || r.coordinates } : r
                 );
@@ -358,6 +392,57 @@
                 setSelectedMergeNames(new Set());
                 setMergeCanonicalName('');
                 showToast(`Merged ${names.length} hotspots into "${canonical}".`);
+            };
+
+            // Restores a merged hotspot's original hotspots exactly as they were the moment
+            // before merging. This necessarily replaces whatever the merged hotspot's records
+            // look like NOW with that frozen snapshot — anything added or changed there since
+            // the merge (new eBird syncs, manual edits) is lost for that hotspot specifically.
+            const handleUnmergeHotspot = (canonicalName) => {
+                const entry = mergeHistory[canonicalName];
+                if (!entry) return;
+                if (!confirm(`Unmerge "${canonicalName}" back into ${entry.sourceNames.length} separate hotspots (${entry.sourceNames.join(', ')})?\n\nAny sightings added or changed at this hotspot since the merge will be replaced by the pre-merge data.`)) return;
+
+                const otherRecords = birdRecords.filter(r => r.locationName !== canonicalName);
+                const restored = entry.snapshot.map(r => ({ ...r }));
+                setRawData(recordsToTSV([...otherRecords, ...restored]));
+
+                setMergeHistory(prev => {
+                    const next = { ...prev };
+                    delete next[canonicalName];
+                    return next;
+                });
+                if (selectedLocation === canonicalName) setSelectedLocation('ALL');
+                showToast(`Unmerged "${canonicalName}" back into ${entry.sourceNames.length} hotspots.`);
+            };
+
+            const startRenameMergedHotspot = (name) => {
+                setEditingMergeName(name);
+                setEditingMergeNameDraft(name);
+            };
+
+            const saveRenameMergedHotspot = () => {
+                const oldName = editingMergeName;
+                const newName = editingMergeNameDraft.trim();
+                if (!oldName || !newName || newName === oldName) {
+                    setEditingMergeName(null);
+                    return;
+                }
+                const updated = birdRecords.map(r => r.locationName === oldName ? { ...r, locationName: newName } : r);
+                setRawData(recordsToTSV(updated));
+
+                setMergeHistory(prev => {
+                    if (!prev[oldName]) return prev;
+                    const next = { ...prev };
+                    next[newName] = next[oldName];
+                    delete next[oldName];
+                    return next;
+                });
+                setHiddenLocations(prev => prev.map(n => (n === oldName ? newName : n)));
+                if (selectedLocation === oldName) setSelectedLocation(newName);
+                setEditingMergeName(null);
+                setEditingMergeNameDraft('');
+                showToast(`Renamed "${oldName}" to "${newName}".`);
             };
 
             // --- Date range filter ------------------------------------------------------------
@@ -397,7 +482,7 @@
             const [selectedBird, setSelectedBird] = useState('ALL'); // Added bird selection state
             const [selectedRegion, setSelectedRegion] = useState('ALL'); // Filter by eBird region code
             const [sortBy, setSortBy] = useState('bird');
-            const [listViewMode, setListViewMode] = useState('sighting'); // 'sighting' | 'species'
+            const [listViewMode, setListViewMode] = useState('species'); // 'sighting' | 'species'
             const [expandedSpecies, setExpandedSpecies] = useState(() => new Set());
             const [toastMsg, setToastMsg] = useState('');
 
@@ -1426,6 +1511,43 @@
                                             <button onClick={handleMergeHotspots} className="bg-teal-500 text-slate-950 font-bold px-4 py-1.5 rounded-lg text-xs hover:bg-teal-400 transition shrink-0">
                                                 Merge {selectedMergeNames.size} Selected
                                             </button>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="border-t border-slate-800 pt-4 space-y-2">
+                                    <h4 className="text-xs font-bold text-slate-200">Merged Hotspots ({Object.keys(mergeHistory).length})</h4>
+                                    {Object.keys(mergeHistory).length === 0 ? (
+                                        <p className="text-[10px] text-slate-500">No merges yet. Once you merge hotspots above, they'll show up here with options to rename the result or undo the merge.</p>
+                                    ) : (
+                                        <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                                            {Object.entries(mergeHistory).map(([canonicalName, entry]) => (
+                                                <div key={canonicalName} className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] space-y-1">
+                                                    {editingMergeName === canonicalName ? (
+                                                        <div className="flex items-center gap-1.5">
+                                                            <input
+                                                                type="text"
+                                                                autoFocus
+                                                                value={editingMergeNameDraft}
+                                                                onChange={(e) => setEditingMergeNameDraft(e.target.value)}
+                                                                onKeyDown={(e) => { if (e.key === 'Enter') saveRenameMergedHotspot(); if (e.key === 'Escape') setEditingMergeName(null); }}
+                                                                className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-100 focus:outline-none"
+                                                            />
+                                                            <button onClick={saveRenameMergedHotspot} className="text-teal-400 hover:text-teal-300 font-bold shrink-0">✓</button>
+                                                            <button onClick={() => setEditingMergeName(null)} className="text-slate-500 hover:text-slate-300 font-bold shrink-0">✕</button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <span className="text-slate-200 font-bold truncate">{canonicalName}</span>
+                                                            <div className="flex items-center gap-1 shrink-0">
+                                                                <button onClick={() => startRenameMergedHotspot(canonicalName)} title="Rename" className="p-1 bg-slate-900 border border-slate-800 hover:text-teal-400 rounded text-slate-500 transition">✎</button>
+                                                                <button onClick={() => handleUnmergeHotspot(canonicalName)} title="Unmerge — restore original hotspots" className="p-1 bg-slate-900 border border-slate-800 hover:text-amber-400 rounded text-slate-500 transition">⇤</button>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    <div className="text-slate-500 text-[10px] truncate">from: {entry.sourceNames.join(' · ')}</div>
+                                                </div>
+                                            ))}
                                         </div>
                                     )}
                                 </div>
