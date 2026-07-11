@@ -132,6 +132,21 @@
             const storageSet = (key, value) => {
                 try { window.localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* ignore */ }
             };
+            // This app's stored-data shape has changed several times as features were added
+            // (life lists went from a flat array to named lists, regions went from a single
+            // string to an array, etc). A value left over from an older version — or corrupted
+            // by a partial write — won't match what the current code expects, and something as
+            // simple as `undefinedThing.map(...)` then takes the whole app down. These two
+            // wrappers validate the *type* of whatever came out of storage before trusting it,
+            // so a stale/malformed value degrades to the fallback instead of crashing.
+            const storageGetArray = (key, fallback) => {
+                const val = storageGet(key, fallback);
+                return Array.isArray(val) ? val : fallback;
+            };
+            const storageGetObject = (key, fallback) => {
+                const val = storageGet(key, fallback);
+                return (val && typeof val === 'object' && !Array.isArray(val)) ? val : fallback;
+            };
 
         function App() {
             const [rawData, setRawData] = useState(() => storageGet('cbc_rawData', INITIAL_RAW_DATA));
@@ -145,17 +160,32 @@
             // life list under "My Life List" the first time this loads (backward-compatible
             // with the previous single-life-list version of this app).
             const [savedLifeLists, setSavedLifeLists] = useState(() => {
-                const existing = storageGet('cbc_savedLifeLists', null);
-                if (existing) return existing;
-                const legacyList = storageGet('cbc_lifeList', DEFAULT_LIFE_LIST);
+                const existing = storageGetObject('cbc_savedLifeLists', null);
+                if (existing && Object.keys(existing).length > 0) {
+                    // Sanitize entry-by-entry: keep only entries that actually have a valid
+                    // names array, in case an earlier version wrote something malformed.
+                    const sanitized = {};
+                    Object.entries(existing).forEach(([id, list]) => {
+                        if (list && Array.isArray(list.names)) {
+                            sanitized[id] = { label: typeof list.label === 'string' ? list.label : id, names: list.names };
+                        }
+                    });
+                    if (Object.keys(sanitized).length > 0) return sanitized;
+                }
+                const legacyList = storageGetArray('cbc_lifeList', DEFAULT_LIFE_LIST);
                 return { default: { label: 'My Life List', names: legacyList } };
             });
             const [activeLifeListId, setActiveLifeListId] = useState(() => storageGet('cbc_activeLifeListId', 'default'));
             const [newLifeListLabel, setNewLifeListLabel] = useState('');
-            const lifeList = savedLifeLists[activeLifeListId]?.names || DEFAULT_LIFE_LIST;
+            // Extra safety net at the read site too, regardless of what's upstream: if
+            // activeLifeListId points at a list that no longer exists (e.g. it was deleted in
+            // another tab), or that entry's names somehow isn't an array, fall back rather than
+            // let `.map` further down throw on an undefined value.
+            const activeNames = savedLifeLists && savedLifeLists[activeLifeListId] && savedLifeLists[activeLifeListId].names;
+            const lifeList = Array.isArray(activeNames) ? activeNames : DEFAULT_LIFE_LIST;
 
-            const [seenOverrides, setSeenOverrides] = useState(() => storageGet('cbc_seenOverrides', {}));
-            const [hiddenLocations, setHiddenLocations] = useState(() => storageGet('cbc_hiddenLocations', []));
+            const [seenOverrides, setSeenOverrides] = useState(() => storageGetObject('cbc_seenOverrides', {}));
+            const [hiddenLocations, setHiddenLocations] = useState(() => storageGetArray('cbc_hiddenLocations', []));
             const lifeListFileRef = useRef(null);
             const reportFileRef = useRef(null);
 
@@ -174,9 +204,9 @@
             // any time in Settings. Note this file will contain that key in plain text — treat
             // it like any personal credential and don't publish/share this file publicly.
             const [ebirdApiKey, setEbirdApiKey] = useState(() => storageGet('cbc_ebirdApiKey', 'l531bs6l4t92'));
-            const [ebirdRegions, setEbirdRegions] = useState(() => storageGet('cbc_ebirdRegions', ['US-MA-001'])); // Barnstable County, MA
+            const [ebirdRegions, setEbirdRegions] = useState(() => storageGetArray('cbc_ebirdRegions', ['US-MA-001'])); // Barnstable County, MA
             const [newRegionInput, setNewRegionInput] = useState('');
-            const [taxonomyMap, setTaxonomyMap] = useState(() => storageGet('cbc_taxonomyMap', {}));
+            const [taxonomyMap, setTaxonomyMap] = useState(() => storageGetObject('cbc_taxonomyMap', {}));
             const [taxonomySyncedAt, setTaxonomySyncedAt] = useState(() => storageGet('cbc_taxonomySyncedAt', null));
             const [ebirdSyncedAt, setEbirdSyncedAt] = useState(() => storageGet('cbc_ebirdSyncedAt', null));
             const [isSyncing, setIsSyncing] = useState(false);
@@ -256,14 +286,18 @@
             };
 
             const suggestedMergeGroups = useMemo(() => {
-                const allNames = Array.from(new Set(birdRecords.map(r => r.locationName))).filter(Boolean);
-                const byCore = new Map();
-                allNames.forEach(name => {
-                    const core = locationCoreTokens(name);
-                    if (!byCore.has(core)) byCore.set(core, []);
-                    byCore.get(core).push(name);
-                });
-                return Array.from(byCore.values()).filter(group => group.length > 1);
+                try {
+                    const allNames = Array.from(new Set(birdRecords.map(r => r.locationName))).filter(Boolean);
+                    const byCore = new Map();
+                    allNames.forEach(name => {
+                        const core = locationCoreTokens(name);
+                        if (!byCore.has(core)) byCore.set(core, []);
+                        byCore.get(core).push(name);
+                    });
+                    return Array.from(byCore.values()).filter(group => group.length > 1);
+                } catch (e) {
+                    return [];
+                }
             }, [birdRecords]);
 
             const toggleMergeSelection = (name) => {
@@ -419,13 +453,17 @@
             // birdRecords enriched with a computed `seen` field (life list match, or manual override),
             // with hidden hotspots excluded so they disappear from stats, map, and the list entirely.
             const enrichedRecords = useMemo(() => {
-                return birdRecords
-                    .filter(r => !hiddenLocations.includes(r.locationName))
-                    .map(r => {
-                        const overrideKey = `${r.locationName}|${r.bird}`.toLowerCase();
-                        const isOverridden = Object.prototype.hasOwnProperty.call(seenOverrides, overrideKey);
-                        return { ...r, seen: getSeen(r), isOverridden };
-                    });
+                try {
+                    return birdRecords
+                        .filter(r => !hiddenLocations.includes(r.locationName))
+                        .map(r => {
+                            const overrideKey = `${r.locationName}|${r.bird}`.toLowerCase();
+                            const isOverridden = Object.prototype.hasOwnProperty.call(seenOverrides, overrideKey);
+                            return { ...r, seen: getSeen(r), isOverridden };
+                        });
+                } catch (e) {
+                    return [];
+                }
             }, [birdRecords, lifeListSet, seenOverrides, hiddenLocations]);
 
             const stats = useMemo(() => {
@@ -544,23 +582,27 @@
             // already species-wide by nature, and a manual override at any one location is a
             // reasonable proxy for "I have personally seen this bird" at the group level too.
             const speciesGroups = useMemo(() => {
-                const groups = new Map();
-                filteredRecords.forEach(r => {
-                    const key = normalizeBirdName(r.bird);
-                    if (!groups.has(key)) {
-                        groups.set(key, { key, displayName: r.bird, rare: false, seen: false, isOverridden: false, locations: [] });
-                    }
-                    const g = groups.get(key);
-                    // Prefer an unqualified display name (e.g. "Willet" over "Willet (Eastern)")
-                    // if we encounter one, since it reads better as the group header.
-                    if (g.displayName.includes('(') && !r.bird.includes('(')) g.displayName = r.bird;
-                    if (r.rare === 'Y') g.rare = true;
-                    if (r.seen === 'Y') g.seen = true;
-                    if (r.isOverridden) g.isOverridden = true;
-                    g.locations.push(r);
-                });
-                groups.forEach(g => g.locations.sort((a, b) => parseFlexibleDate(b.lastReported) - parseFlexibleDate(a.lastReported)));
-                return Array.from(groups.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+                try {
+                    const groups = new Map();
+                    filteredRecords.forEach(r => {
+                        const key = normalizeBirdName(r.bird);
+                        if (!groups.has(key)) {
+                            groups.set(key, { key, displayName: r.bird, rare: false, seen: false, isOverridden: false, locations: [] });
+                        }
+                        const g = groups.get(key);
+                        // Prefer an unqualified display name (e.g. "Willet" over "Willet (Eastern)")
+                        // if we encounter one, since it reads better as the group header.
+                        if (g.displayName.includes('(') && !r.bird.includes('(')) g.displayName = r.bird;
+                        if (r.rare === 'Y') g.rare = true;
+                        if (r.seen === 'Y') g.seen = true;
+                        if (r.isOverridden) g.isOverridden = true;
+                        g.locations.push(r);
+                    });
+                    groups.forEach(g => g.locations.sort((a, b) => parseFlexibleDate(b.lastReported) - parseFlexibleDate(a.lastReported)));
+                    return Array.from(groups.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+                } catch (e) {
+                    return [];
+                }
             }, [filteredRecords]);
 
             const toggleSpeciesExpanded = (key) => {
