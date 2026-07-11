@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
-    <title>Cape Cod Birding Console</title>
+    <title>Birding Console</title>
     
     <!-- PWA & Mobile Web App Meta Tags -->
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -37,7 +37,7 @@
     <script src="https://unpkg.com/mammoth@1.11.0/mammoth.browser.min.js"></script>
 
     <!-- Inline Web App Manifest Data-URI -->
-    <link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjoiQ2FwZSBDb2QgQmlyZGluZyBDb25zb2xlIiwic2hvcnRfbmFtZSI6IkNhcGVCaXJkaW5nIiwic3RhcnRfdXJsIjoiLiIsImRpc3BsYXkiOiJzdGFuZGFsb25lIiwiYmFja2dyb3VuZF9jb2xvciI6IiMwMjA2MTciLCJ0aGVtZV9jb2xvciI6IiMwZjE3MmEiLCJkZXNjcmlwdGlvbiI6IlRhY3RpY2FsIGJpcmQgdHJhY2tpbmcgcG9ydGFsIHdpdGggbGl2ZSBtYXBwaW5nLiIsImljb25zIjpbeyJzcmMiOiJodHRwczovL2Nkbi1pY29ucy1wbmcuZmxhdGljb24uY29tLzUxMi8zMDY5LzMwNjkxNzIucG5nIiwic2l6ZXMiOiI1MTJ4NTEyIiwidHlwZSI6ImltYWdlL3BuZyJ9XX0=">
+    <link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjoiQmlyZGluZyBDb25zb2xlIiwic2hvcnRfbmFtZSI6IkJpcmRpbmciLCJzdGFydF91cmwiOiIuIiwiZGlzcGxheSI6InN0YW5kYWxvbmUiLCJiYWNrZ3JvdW5kX2NvbG9yIjoiIzAyMDYxNyIsInRoZW1lX2NvbG9yIjoiIzBmMTcyYSIsImRlc2NyaXB0aW9uIjoiVGFjdGljYWwgYmlyZCB0cmFja2luZyBwb3J0YWwgd2l0aCBsaXZlIG1hcHBpbmcuIiwiaWNvbnMiOlt7InNyYyI6Imh0dHBzOi8vaW1nLmljb25zOC5jb20vY29sb3IvNTEyL2JpcmQucG5nIiwic2l6ZXMiOiI1MTJ4NTEyIiwidHlwZSI6ImltYWdlL3BuZyJ9XX0=">
 
     <style>
         /* Dark Theme Leaflet customization */
@@ -390,7 +390,8 @@
                 return recordDate >= cutoff;
             };
             
-            const [searchQuery, setSearchQuery] = useState('');
+            const [speciesSearchQuery, setSpeciesSearchQuery] = useState('');
+            const [hotspotSearchQuery, setHotspotSearchQuery] = useState('');
             const [statusFilter, setStatusFilter] = useState('ALL'); 
             const [selectedLocation, setSelectedLocation] = useState('ALL');
             const [selectedBird, setSelectedBird] = useState('ALL'); // Added bird selection state
@@ -428,7 +429,7 @@
 
                 window.addEventListener('appinstalled', () => {
                     setIsInstallable(false);
-                    showToast("Cape Cod Birding Console installed on Home Screen!");
+                    showToast("Birding Console installed on Home Screen!");
                 });
             }, []);
 
@@ -550,16 +551,20 @@
 
             const filteredRecords = useMemo(() => {
                 return enrichedRecords.filter(r => {
-                    const matchesSearch = 
-                        r.bird.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        r.locationName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        r.coordinates.includes(searchQuery);
+                    // Species and hotspot search are independent (both must match, if either is
+                    // filled in) rather than one combined "match anything" box — searching
+                    // "tern" for species and "race point" for hotspot together should mean terns
+                    // AT Race Point, not terns OR anything matching "race point" anywhere.
+                    const matchesSpeciesSearch = !speciesSearchQuery || r.bird.toLowerCase().includes(speciesSearchQuery.toLowerCase());
+                    const matchesHotspotSearch = !hotspotSearchQuery ||
+                        r.locationName.toLowerCase().includes(hotspotSearchQuery.toLowerCase()) ||
+                        r.coordinates.includes(hotspotSearchQuery);
 
                     const matchesLocation = selectedLocation === 'ALL' || r.locationName === selectedLocation;
                     const matchesBirdSelection = selectedBird === 'ALL' || r.bird === selectedBird;
                     const matchesRegion = selectedRegion === 'ALL' || r.region === selectedRegion;
 
-                    if (!matchesSearch || !matchesLocation || !matchesBirdSelection || !matchesRegion || !isWithinDateRange(r)) return false;
+                    if (!matchesSpeciesSearch || !matchesHotspotSearch || !matchesLocation || !matchesBirdSelection || !matchesRegion || !isWithinDateRange(r)) return false;
 
                     if (statusFilter === 'SEEN') return r.seen === 'Y';
                     if (statusFilter === 'UNSEEN') return r.seen === 'N';
@@ -573,7 +578,7 @@
                     if (sortBy === 'status') return b.seen.localeCompare(a.seen);
                     return 0;
                 });
-            }, [enrichedRecords, searchQuery, statusFilter, selectedLocation, selectedBird, selectedRegion, sortBy, dateRangeFilter, customDateFrom, customDateTo]);
+            }, [enrichedRecords, speciesSearchQuery, hotspotSearchQuery, statusFilter, selectedLocation, selectedBird, selectedRegion, sortBy, dateRangeFilter, customDateFrom, customDateTo]);
 
             // "By Species" view: groups filteredRecords by species (matching the same normalized
             // name used for life-list comparisons, so a qualified form like "Willet (Eastern)"
@@ -852,7 +857,8 @@
             const viewTodaysTargets = () => {
                 setStatusFilter('PRIORITY');
                 setDateRangeFilter('24H');
-                setSearchQuery('');
+                setSpeciesSearchQuery('');
+                setHotspotSearchQuery('');
                 setSelectedLocation('ALL');
                 setSelectedBird('ALL');
                 setSelectedRegion('ALL');
@@ -979,7 +985,7 @@
                 const a = document.createElement('a');
                 const stamp = new Date().toISOString().slice(0, 10);
                 a.href = url;
-                a.download = `cape-cod-birds-${stamp}.csv`;
+                a.download = `birding-console-${stamp}.csv`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
@@ -1272,8 +1278,8 @@
                                     </svg>
                                 </div>
                                 <div>
-                                    <h1 className="text-lg md:text-xl font-black bg-gradient-to-r from-teal-400 to-emerald-400 bg-clip-text text-transparent">CAPE COD BIRD SIGHTINGS</h1>
-                                    <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold">Interactive Cape Cod Bird Sighting Portal</p>
+                                    <h1 className="text-lg md:text-xl font-black bg-gradient-to-r from-teal-400 to-emerald-400 bg-clip-text text-transparent">BIRDING CONSOLE</h1>
+                                    <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold">Interactive Bird Sighting Portal</p>
                                 </div>
                             </div>
                             
@@ -1731,8 +1737,9 @@
 
                             <div className="lg:col-span-7 space-y-4">
                                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4 shadow-md">
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                        <input type="text" placeholder="Search species..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-xl px-4 py-2 text-xs focus:outline-none" />
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                                        <input type="text" placeholder="Search species..." value={speciesSearchQuery} onChange={(e) => setSpeciesSearchQuery(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-xl px-4 py-2 text-xs focus:outline-none" />
+                                        <input type="text" placeholder="Search hotspot..." value={hotspotSearchQuery} onChange={(e) => setHotspotSearchQuery(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-xl px-4 py-2 text-xs focus:outline-none" />
                                         <select value={selectedLocation} onChange={(e) => setSelectedLocation(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-300 rounded-xl px-4 py-2 text-xs focus:outline-none">
                                             <option value="ALL">📍 All Hotspots</option>
                                             {Array.from(new Set(enrichedRecords.map(r => r.locationName))).sort().map((loc, idx) => (
@@ -2257,7 +2264,7 @@
                 return { error };
             }
             componentDidCatch(error, info) {
-                console.error('Cape Cod Birding Console crashed:', error, info);
+                console.error('Birding Console crashed:', error, info);
             }
             render() {
                 if (this.state.error) {
