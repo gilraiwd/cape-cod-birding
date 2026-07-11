@@ -85,6 +85,26 @@
         // labeled and switchable, so nobody's data overwrites anyone else's (see savedLifeLists).
         const DEFAULT_LIFE_LIST = [];
 
+        // Shown in the About modal. Bump SITE_LAST_UPDATED and add a line to CHANGELOG (newest
+        // first) whenever this file is meaningfully changed.
+        const SITE_LAST_UPDATED = 'July 11, 2026';
+        const CHANGELOG = [
+            'Stat cards now count unique species, not raw sightings — a bird reported at 5 hotspots counted as 5 before; fixed wording ("Rare species" no longer says "checked off").',
+            'Stat cards, and the eBird-links species-code sync, hardened against corrupted saved data so a stale/mismatched value degrades gracefully instead of crashing the app.',
+            'Added an About panel (this one) with a changelog.',
+            'Species and hotspot search split into two independent boxes instead of one fuzzy box matching either.',
+            'Renamed the app to "Birding Console" and fixed the home-screen icon (it was showing a koala).',
+            '"By Species" is now the default list view; added a list of merged hotspots with rename and unmerge options.',
+            'Stat cards, date filters, and search now respect the active hotspot/region/date filters instead of always reflecting the whole dataset.',
+            'Manual hotspot merging (with a "these look similar" suggestion list), auto-purge of sightings over 30 days old on every sync, default filter set to Last 7 days.',
+            '"By Species" list view added — one row per species with every hotspot it\'s been seen at, instead of one row per sighting.',
+            'Fixed the map going blank (a missing zoom-bounds setting) and the "Last 24h" filter showing nothing despite recent sightings (a timezone date-parsing bug).',
+            'Added a "Find Me" button and a "Home" button (zooms to the active region) to the map.',
+            'Added eBird checklist links per sighting, multiple/named life lists (for sharing this site with others), multi-region support with a region filter.',
+            'Connected live eBird sync: daily recent + notable/rare sightings for your region(s), plus live species-code lookups so eBird links are always correct.',
+            'Removed the "Seen" column from manual data entry — seen/unseen is now derived automatically by comparing sightings against your uploaded life list.'
+        ];
+
         // Small curated fallback map, used only until the live eBird taxonomy has been
         // synced (see Settings > eBird API Key). Kept intentionally short — hand-typed
         // species code lists are exactly how wrong/missing links happen at scale, which is
@@ -212,6 +232,7 @@
             const [isSyncing, setIsSyncing] = useState(false);
             const [syncError, setSyncError] = useState('');
             const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+            const [showAboutModal, setShowAboutModal] = useState(false);
             const [legendExpanded, setLegendExpanded] = useState(false); // collapsed by default — mostly for mobile screen space
 
             useEffect(() => { storageSet('cbc_ebirdApiKey', ebirdApiKey); }, [ebirdApiKey]);
@@ -572,22 +593,42 @@
             }, [enrichedRecords, speciesSearchQuery, hotspotSearchQuery, selectedLocation, selectedBird, selectedRegion, dateRangeFilter, customDateFrom, customDateTo]);
 
             const stats = useMemo(() => {
-                const total = statsScopedRecords.length;
-                const seenCount = statsScopedRecords.filter(r => r.seen === 'Y').length;
-                const rareCount = statsScopedRecords.filter(r => r.rare === 'Y').length;
-                const priorityCount = statsScopedRecords.filter(r => r.rare === 'Y' && r.seen === 'N').length;
+                // Counts are per unique SPECIES, not per sighting — a bird reported at 5
+                // different hotspots is one species, not five, toward "Encountered species"
+                // etc. (matching what those labels actually say, and consistent with the
+                // species-grouped list view). "Seen"/"rare" for a species is true if true at
+                // ANY of its sightings in the current scope, same rule speciesGroups uses.
+                const bySpecies = new Map();
+                statsScopedRecords.forEach(r => {
+                    const key = normalizeBirdName(r.bird);
+                    if (!bySpecies.has(key)) bySpecies.set(key, { rare: false, seen: false });
+                    const s = bySpecies.get(key);
+                    if (r.rare === 'Y') s.rare = true;
+                    if (r.seen === 'Y') s.seen = true;
+                });
+                const speciesList = Array.from(bySpecies.values());
+                const total = speciesList.length;
+                const seenCount = speciesList.filter(s => s.seen).length;
+                const rareCount = speciesList.filter(s => s.rare).length;
+                const priorityCount = speciesList.filter(s => s.rare && !s.seen).length;
                 const uniqueSpots = new Set(statsScopedRecords.map(r => r.locationName)).size;
 
-                // Today's Targets: unseen rares reported today — the actionable, time-sensitive
-                // subset. Uses the same calendar-day comparison as the "Last 24h" date filter
-                // (see isWithinDateRange) since "Last Reported" is date-only, no time-of-day.
+                // Today's Targets: unseen rare SPECIES reported today (deduped the same way —
+                // one entry per species, not one per hotspot it showed up at today), the
+                // actionable, time-sensitive subset. Uses the same calendar-day comparison as
+                // the "Last 24h" date filter (see isWithinDateRange) since "Last Reported" is
+                // date-only, no time-of-day.
                 const now = new Date();
                 const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                const todayTargets = statsScopedRecords.filter(r => {
-                    if (r.rare !== 'Y' || r.seen !== 'N') return false;
+                const todayTargetsBySpecies = new Map();
+                statsScopedRecords.forEach(r => {
+                    if (r.rare !== 'Y' || r.seen !== 'N') return;
                     const d = parseFlexibleDate(r.lastReported);
-                    return !isNaN(d) && d >= startOfToday;
+                    if (isNaN(d) || d < startOfToday) return;
+                    const key = normalizeBirdName(r.bird);
+                    if (!todayTargetsBySpecies.has(key)) todayTargetsBySpecies.set(key, r);
                 });
+                const todayTargets = Array.from(todayTargetsBySpecies.values());
 
                 return {
                     total, seenCount, unseenCount: total - seenCount,
@@ -951,7 +992,7 @@
                 setSelectedLocation('ALL');
                 setSelectedBird('ALL');
                 setSelectedRegion('ALL');
-                showToast(`Showing ${stats.todayTargets.length} unseen rare target(s) from the last 24h.`);
+                showToast(`Showing ${stats.todayTargets.length} unseen rare species from the last 24h.`);
             };
 
             const handleAddSubmit = (e) => {
@@ -1394,6 +1435,9 @@
                                 <button onClick={() => setShowSettingsPanel(!showSettingsPanel)} className="bg-slate-800 text-slate-300 border border-slate-700 font-semibold px-4 py-2 rounded-xl text-xs hover:bg-slate-700 transition relative">
                                     Settings
                                     {isSyncing && <span className="absolute -top-1 -right-1 w-2 h-2 bg-teal-400 rounded-full animate-ping" />}
+                                </button>
+                                <button onClick={() => setShowAboutModal(true)} title="About this site" className="w-8 h-8 flex items-center justify-center bg-slate-800 text-slate-300 border border-slate-700 font-bold rounded-xl text-xs hover:bg-slate-700 transition shrink-0">
+                                    ℹ️
                                 </button>
                                 <input ref={lifeListFileRef} type="file" accept=".csv" onChange={handleLifeListFile} className="hidden" />
                                 <input ref={reportFileRef} type="file" accept=".docx,.txt,.tsv" onChange={handleReportFile} className="hidden" />
@@ -2138,6 +2182,55 @@
                                         <button type="submit" className="bg-teal-500 text-slate-950 px-4 py-1.5 rounded-lg font-bold hover:bg-teal-400 transition">Submit</button>
                                     </div>
                                 </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {showAboutModal && (
+                        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl">
+                                <div className="flex justify-between items-center border-b border-slate-800 p-5 pb-4 shrink-0">
+                                    <div>
+                                        <h3 className="text-sm font-extrabold uppercase text-teal-400 tracking-wider">About Birding Console</h3>
+                                        <p className="text-[10px] text-slate-500 mt-0.5">Last updated {SITE_LAST_UPDATED}</p>
+                                    </div>
+                                    <button onClick={() => setShowAboutModal(false)} className="text-slate-400 text-sm font-black shrink-0">✕</button>
+                                </div>
+                                <div className="overflow-y-auto p-5 pt-4 space-y-5 text-xs text-slate-300">
+                                    <div className="space-y-2">
+                                        <p>
+                                            Birding Console is a personal birding tracker built around one question: <strong className="text-white">of everything being reported nearby, what haven't I seen yet?</strong> It compares live sightings against your eBird life list and highlights the gaps — especially rare birds you don't yet have.
+                                        </p>
+                                        <p>
+                                            It's a single self-contained file with no server — everything runs in your browser, and your data (sightings, life lists, settings) lives in this browser's local storage. Install it to your home screen for an app-like experience.
+                                        </p>
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Core features</h4>
+                                        <ul className="space-y-1.5 list-disc list-inside text-slate-400">
+                                            <li><strong className="text-slate-200">Live eBird sync</strong> — pulls recent and notable/rare sightings daily for whichever region(s) you configure in Settings, using your own free eBird API key.</li>
+                                            <li><strong className="text-slate-200">Life lists</strong> — upload your eBird life list export to drive "seen" status automatically. Upload more than one (labeled and switchable) to share this site with friends without anyone's data overwriting anyone else's.</li>
+                                            <li><strong className="text-slate-200">Map</strong> — every hotspot plotted and color-coded by status, with clustering, a Find Me button, and a Home button that zooms to your active region.</li>
+                                            <li><strong className="text-slate-200">Two list views</strong> — By Species (one row per bird, every hotspot it's been seen at) or By Sighting (one row per report).</li>
+                                            <li><strong className="text-slate-200">Filters</strong> — by date range, hotspot, region, species/hotspot search, and seen/unseen/rare/priority status.</li>
+                                            <li><strong className="text-slate-200">Hotspot cleanup</strong> — hide hotspots you don't care about, or merge near-duplicate names (with rename/unmerge if you change your mind).</li>
+                                            <li><strong className="text-slate-200">Import/export</strong> — upload eBird rare-alert reports (.docx/.txt/.tsv) or a raw TSV, export the current view as CSV.</li>
+                                        </ul>
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Recent changes</h4>
+                                        <ul className="space-y-1.5">
+                                            {CHANGELOG.map((entry, idx) => (
+                                                <li key={idx} className="flex gap-2 text-slate-400">
+                                                    <span className="text-teal-500 shrink-0">•</span>
+                                                    <span>{entry}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     )}
