@@ -552,19 +552,38 @@
                 }
             }, [birdRecords, lifeListSet, seenOverrides, hiddenLocations]);
 
+            // Everything the stat cards and "Today's Targets" should reflect: search, date
+            // range, hotspot, and region filters — but NOT the status tabs (Seen/Unseen/Rare/
+            // Priority) themselves, since those tabs ARE these same cards in filter form. Basing
+            // the cards on something that already excludes only-what-they-represent means the
+            // "Rare species" count doesn't vanish just because you clicked "Unseen", while still
+            // correctly narrowing to whatever hotspot/date range/search you've applied.
+            const statsScopedRecords = useMemo(() => {
+                return enrichedRecords.filter(r => {
+                    const matchesSpeciesSearch = !speciesSearchQuery || r.bird.toLowerCase().includes(speciesSearchQuery.toLowerCase());
+                    const matchesHotspotSearch = !hotspotSearchQuery ||
+                        r.locationName.toLowerCase().includes(hotspotSearchQuery.toLowerCase()) ||
+                        r.coordinates.includes(hotspotSearchQuery);
+                    const matchesLocation = selectedLocation === 'ALL' || r.locationName === selectedLocation;
+                    const matchesBirdSelection = selectedBird === 'ALL' || r.bird === selectedBird;
+                    const matchesRegion = selectedRegion === 'ALL' || r.region === selectedRegion;
+                    return matchesSpeciesSearch && matchesHotspotSearch && matchesLocation && matchesBirdSelection && matchesRegion && isWithinDateRange(r);
+                });
+            }, [enrichedRecords, speciesSearchQuery, hotspotSearchQuery, selectedLocation, selectedBird, selectedRegion, dateRangeFilter, customDateFrom, customDateTo]);
+
             const stats = useMemo(() => {
-                const total = enrichedRecords.length;
-                const seenCount = enrichedRecords.filter(r => r.seen === 'Y').length;
-                const rareCount = enrichedRecords.filter(r => r.rare === 'Y').length;
-                const priorityCount = enrichedRecords.filter(r => r.rare === 'Y' && r.seen === 'N').length;
-                const uniqueSpots = new Set(enrichedRecords.map(r => r.locationName)).size;
+                const total = statsScopedRecords.length;
+                const seenCount = statsScopedRecords.filter(r => r.seen === 'Y').length;
+                const rareCount = statsScopedRecords.filter(r => r.rare === 'Y').length;
+                const priorityCount = statsScopedRecords.filter(r => r.rare === 'Y' && r.seen === 'N').length;
+                const uniqueSpots = new Set(statsScopedRecords.map(r => r.locationName)).size;
 
                 // Today's Targets: unseen rares reported today — the actionable, time-sensitive
                 // subset. Uses the same calendar-day comparison as the "Last 24h" date filter
                 // (see isWithinDateRange) since "Last Reported" is date-only, no time-of-day.
                 const now = new Date();
                 const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                const todayTargets = enrichedRecords.filter(r => {
+                const todayTargets = statsScopedRecords.filter(r => {
                     if (r.rare !== 'Y' || r.seen !== 'N') return false;
                     const d = parseFlexibleDate(r.lastReported);
                     return !isNaN(d) && d >= startOfToday;
@@ -575,7 +594,7 @@
                     seenPercentage: total > 0 ? Math.round((seenCount / total) * 100) : 0,
                     rareCount, priorityCount, uniqueSpots, todayTargets
                 };
-            }, [enrichedRecords]);
+            }, [statsScopedRecords]);
 
             // Visible diagnostics for the date filter — shows the actual counts per bucket and
             // what "today" the app is computing, directly in the UI, rather than requiring dev
@@ -635,22 +654,7 @@
             };
 
             const filteredRecords = useMemo(() => {
-                return enrichedRecords.filter(r => {
-                    // Species and hotspot search are independent (both must match, if either is
-                    // filled in) rather than one combined "match anything" box — searching
-                    // "tern" for species and "race point" for hotspot together should mean terns
-                    // AT Race Point, not terns OR anything matching "race point" anywhere.
-                    const matchesSpeciesSearch = !speciesSearchQuery || r.bird.toLowerCase().includes(speciesSearchQuery.toLowerCase());
-                    const matchesHotspotSearch = !hotspotSearchQuery ||
-                        r.locationName.toLowerCase().includes(hotspotSearchQuery.toLowerCase()) ||
-                        r.coordinates.includes(hotspotSearchQuery);
-
-                    const matchesLocation = selectedLocation === 'ALL' || r.locationName === selectedLocation;
-                    const matchesBirdSelection = selectedBird === 'ALL' || r.bird === selectedBird;
-                    const matchesRegion = selectedRegion === 'ALL' || r.region === selectedRegion;
-
-                    if (!matchesSpeciesSearch || !matchesHotspotSearch || !matchesLocation || !matchesBirdSelection || !matchesRegion || !isWithinDateRange(r)) return false;
-
+                return statsScopedRecords.filter(r => {
                     if (statusFilter === 'SEEN') return r.seen === 'Y';
                     if (statusFilter === 'UNSEEN') return r.seen === 'N';
                     if (statusFilter === 'RARE') return r.rare === 'Y';
@@ -663,7 +667,7 @@
                     if (sortBy === 'status') return b.seen.localeCompare(a.seen);
                     return 0;
                 });
-            }, [enrichedRecords, speciesSearchQuery, hotspotSearchQuery, statusFilter, selectedLocation, selectedBird, selectedRegion, sortBy, dateRangeFilter, customDateFrom, customDateTo]);
+            }, [statsScopedRecords, statusFilter, sortBy]);
 
             // "By Species" view: groups filteredRecords by species (matching the same normalized
             // name used for life-list comparisons, so a qualified form like "Willet (Eastern)"
@@ -1675,7 +1679,7 @@
                                 </span>
                                 <div className="flex items-baseline gap-2 mt-2">
                                     <span className="text-3xl font-black text-amber-300">{stats.rareCount}</span>
-                                    <span className="text-slate-500 text-xs">checked off</span>
+                                    <span className="text-slate-500 text-xs">reported</span>
                                 </div>
                                 <span className="text-[9px] text-slate-400 mt-3 block font-bold">Click to show rare distribution paths</span>
                             </div>
