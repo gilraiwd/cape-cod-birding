@@ -236,7 +236,7 @@
             };
 
             // --- Date range filter ------------------------------------------------------------
-            const [dateRangeFilter, setDateRangeFilter] = useState('ALL'); // ALL | 24H | 7D | 30D | CUSTOM
+            const [dateRangeFilter, setDateRangeFilter] = useState('7D'); // ALL | 24H | 7D | 30D | CUSTOM
             const [customDateFrom, setCustomDateFrom] = useState('');
             const [customDateTo, setCustomDateTo] = useState('');
 
@@ -1000,10 +1000,7 @@
                 // Hidden hotspots stay excluded from future merges too, so a daily eBird sync
                 // (or re-uploading the same report) doesn't silently bring them back.
                 entries = entries.filter(e => !hiddenLocations.includes(e.locationName));
-                if (entries.length === 0) {
-                    if (!silent) showToast("No new sightings to merge (all matched hidden hotspots, or the file had no recognizable rows).");
-                    return;
-                }
+                const noNewEntries = entries.length === 0;
                 const byKey = new Map(birdRecords.map(r => [`${r.locationName}|${r.bird}`.toLowerCase(), r]));
                 let added = 0, updated = 0;
                 entries.forEach(entry => {
@@ -1036,9 +1033,28 @@
                         added++;
                     }
                 });
-                const merged = Array.from(byKey.values()).sort((a, b) => a.locationName.localeCompare(b.locationName));
+                let merged = Array.from(byKey.values()).sort((a, b) => a.locationName.localeCompare(b.locationName));
+
+                // Purge anything over a month old on every update, so the dataset doesn't grow
+                // unbounded with sightings nobody's chasing anymore. Runs against the WHOLE
+                // dataset (not just this merge's entries), so old records left over from earlier
+                // syncs get cleared out too, not just newly-added ones. Records with an
+                // unparseable/missing date are kept rather than guessed at and deleted.
+                const monthAgo = new Date();
+                monthAgo.setHours(0, 0, 0, 0);
+                monthAgo.setDate(monthAgo.getDate() - 30);
+                const beforePurge = merged.length;
+                merged = merged.filter(r => {
+                    const d = parseFlexibleDate(r.lastReported);
+                    return isNaN(d) || d >= monthAgo;
+                });
+                const purged = beforePurge - merged.length;
+
                 setRawData(recordsToTSV(merged));
-                if (!silent) showToast(`Report merged — ${added} new, ${updated} updated. Seen status recalculated from your life list.`);
+                if (!silent) {
+                    showToast(`Report merged — ${added} new, ${updated} updated${purged > 0 ? `, ${purged} purged (30+ days old)` : ''}. Seen status recalculated from your life list.`);
+                }
+                return { added, updated, purged };
             };
 
             const handleReportFile = async (e) => {
