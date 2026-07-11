@@ -235,6 +235,97 @@
                 showToast(`Deleted all records for "${locationName}".`);
             };
 
+            // --- Hotspot merging ----------------------------------------------------------------
+            // Deliberately manual, not automatic: "Race Point" / "Race Point Beach" / "Race
+            // Point, Provincetown" might be the same spot, or genuinely distinct hotspots birders
+            // treat separately — that's a judgment call the data alone can't make reliably, and a
+            // wrong auto-merge would quietly corrupt real data. So: suggest likely groups by
+            // stripping common generic suffixes (Beach, Light, Trail, etc.) and comparing what's
+            // left, but only ever merge on explicit confirmation.
+            const [selectedMergeNames, setSelectedMergeNames] = useState(() => new Set());
+            const [mergeCanonicalName, setMergeCanonicalName] = useState('');
+
+            const locationCoreTokens = (name) => {
+                const base = name.split(',')[0]; // drop a trailing ", Town" clause
+                const stripSuffixes = ['beach', 'light', 'lighthouse', 'trail', 'trailhead', 'sanctuary', 'nwr', 'wma', 'preserve', 'landing', 'park', 'reservation', 'refuge'];
+                let tokens = base.toLowerCase().split(/\s+/).filter(Boolean);
+                while (tokens.length > 1 && stripSuffixes.includes(tokens[tokens.length - 1])) {
+                    tokens.pop();
+                }
+                return tokens.join(' ');
+            };
+
+            const suggestedMergeGroups = useMemo(() => {
+                const allNames = Array.from(new Set(birdRecords.map(r => r.locationName))).filter(Boolean);
+                const byCore = new Map();
+                allNames.forEach(name => {
+                    const core = locationCoreTokens(name);
+                    if (!byCore.has(core)) byCore.set(core, []);
+                    byCore.get(core).push(name);
+                });
+                return Array.from(byCore.values()).filter(group => group.length > 1);
+            }, [birdRecords]);
+
+            const toggleMergeSelection = (name) => {
+                setSelectedMergeNames(prev => {
+                    const next = new Set(prev);
+                    if (next.has(name)) next.delete(name); else next.add(name);
+                    return next;
+                });
+            };
+
+            const applySuggestedGroup = (group) => {
+                setSelectedMergeNames(new Set(group));
+                setMergeCanonicalName(group.reduce((a, b) => (a.length >= b.length ? a : b)));
+            };
+
+            const handleMergeHotspots = () => {
+                const names = Array.from(selectedMergeNames);
+                if (names.length < 2) {
+                    showToast("Select at least 2 hotspots to merge.");
+                    return;
+                }
+                const canonical = mergeCanonicalName.trim() || names[0];
+                let canonicalCoords = '';
+                for (const n of names) {
+                    const rec = birdRecords.find(r => r.locationName === n && r.coordinates);
+                    if (rec) { canonicalCoords = rec.coordinates; break; }
+                }
+                const renamed = birdRecords.map(r =>
+                    names.includes(r.locationName) ? { ...r, locationName: canonical, coordinates: canonicalCoords || r.coordinates } : r
+                );
+                // Merging can create duplicate (location, species) pairs from the different source
+                // hotspots — dedupe those the same way an eBird sync merge would: keep the newer
+                // date, OR the rare flags together, and follow whichever checklist is newest.
+                const byKey = new Map();
+                renamed.forEach(r => {
+                    const key = `${r.locationName}|${r.bird}`.toLowerCase();
+                    const existing = byKey.get(key);
+                    if (!existing) { byKey.set(key, r); return; }
+                    const newer = parseFlexibleDate(r.lastReported) >= parseFlexibleDate(existing.lastReported);
+                    byKey.set(key, {
+                        ...existing,
+                        rare: existing.rare === 'Y' || r.rare === 'Y' ? 'Y' : 'N',
+                        lastReported: newer ? r.lastReported : existing.lastReported,
+                        checklistId: newer ? (r.checklistId || existing.checklistId || '') : (existing.checklistId || r.checklistId || ''),
+                        region: existing.region || r.region || ''
+                    });
+                });
+                setRawData(recordsToTSV(Array.from(byKey.values())));
+
+                setHiddenLocations(prev => {
+                    const wasHidden = prev.some(n => names.includes(n));
+                    const filtered = prev.filter(n => !names.includes(n));
+                    if (wasHidden && !filtered.includes(canonical)) filtered.push(canonical);
+                    return filtered;
+                });
+                if (names.includes(selectedLocation)) setSelectedLocation(canonical);
+
+                setSelectedMergeNames(new Set());
+                setMergeCanonicalName('');
+                showToast(`Merged ${names.length} hotspots into "${canonical}".`);
+            };
+
             // --- Date range filter ------------------------------------------------------------
             const [dateRangeFilter, setDateRangeFilter] = useState('7D'); // ALL | 24H | 7D | 30D | CUSTOM
             const [customDateFrom, setCustomDateFrom] = useState('');
@@ -271,6 +362,8 @@
             const [selectedBird, setSelectedBird] = useState('ALL'); // Added bird selection state
             const [selectedRegion, setSelectedRegion] = useState('ALL'); // Filter by eBird region code
             const [sortBy, setSortBy] = useState('bird');
+            const [listViewMode, setListViewMode] = useState('sighting'); // 'sighting' | 'species'
+            const [expandedSpecies, setExpandedSpecies] = useState(() => new Set());
             const [toastMsg, setToastMsg] = useState('');
 
             // Install Prompt Intercept State
@@ -443,6 +536,50 @@
                     return 0;
                 });
             }, [enrichedRecords, searchQuery, statusFilter, selectedLocation, selectedBird, selectedRegion, sortBy, dateRangeFilter, customDateFrom, customDateTo]);
+
+            // "By Species" view: groups filteredRecords by species (matching the same normalized
+            // name used for life-list comparisons, so a qualified form like "Willet (Eastern)"
+            // and a plain "Willet" land in the same group rather than splitting). "Seen" for a
+            // group is true if the species is seen ANYWHERE in it — since a life-list match is
+            // already species-wide by nature, and a manual override at any one location is a
+            // reasonable proxy for "I have personally seen this bird" at the group level too.
+            const speciesGroups = useMemo(() => {
+                const groups = new Map();
+                filteredRecords.forEach(r => {
+                    const key = normalizeBirdName(r.bird);
+                    if (!groups.has(key)) {
+                        groups.set(key, { key, displayName: r.bird, rare: false, seen: false, isOverridden: false, locations: [] });
+                    }
+                    const g = groups.get(key);
+                    // Prefer an unqualified display name (e.g. "Willet" over "Willet (Eastern)")
+                    // if we encounter one, since it reads better as the group header.
+                    if (g.displayName.includes('(') && !r.bird.includes('(')) g.displayName = r.bird;
+                    if (r.rare === 'Y') g.rare = true;
+                    if (r.seen === 'Y') g.seen = true;
+                    if (r.isOverridden) g.isOverridden = true;
+                    g.locations.push(r);
+                });
+                groups.forEach(g => g.locations.sort((a, b) => parseFlexibleDate(b.lastReported) - parseFlexibleDate(a.lastReported)));
+                return Array.from(groups.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+            }, [filteredRecords]);
+
+            const toggleSpeciesExpanded = (key) => {
+                setExpandedSpecies(prev => {
+                    const next = new Set(prev);
+                    if (next.has(key)) next.delete(key); else next.add(key);
+                    return next;
+                });
+            };
+
+            // Bulk seen toggle/reset across every location a species was reported at, mirroring
+            // the per-row toggleSeen/resetSeenToLifeList but applied to a whole group at once.
+            const toggleSeenForGroup = (group) => {
+                const target = group.seen ? 'N' : 'Y';
+                group.locations.forEach(r => setSeenOverride(r, target));
+            };
+            const resetSeenForGroup = (group) => {
+                group.locations.forEach(r => clearSeenOverride(r));
+            };
 
             const mapLocations = useMemo(() => {
                 const locMap = {};
@@ -1203,6 +1340,47 @@
                                         </div>
                                     )}
                                 </div>
+
+                                <div className="border-t border-slate-800 pt-4 space-y-2">
+                                    <h4 className="text-xs font-bold text-slate-200">Merge Hotspots</h4>
+                                    <p className="text-[10px] text-slate-500">For hotspots that are really the same place under different names (e.g. "Race Point" / "Race Point Beach"). Nothing merges automatically — pick a suggestion below or select manually, confirm the name, then merge.</p>
+
+                                    {suggestedMergeGroups.length > 0 && (
+                                        <div className="space-y-1.5">
+                                            <span className="text-[9px] text-slate-500 uppercase tracking-wider font-bold">Looks similar</span>
+                                            {suggestedMergeGroups.map((group, idx) => (
+                                                <div key={idx} className="flex items-center justify-between gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-[10px]">
+                                                    <span className="text-slate-300 truncate">{group.join(' · ')}</span>
+                                                    <button onClick={() => applySuggestedGroup(group)} className="text-teal-400 hover:underline font-bold shrink-0">Select</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1 border border-slate-800 rounded-lg p-2 bg-slate-950">
+                                        {Array.from(new Set(birdRecords.map(r => r.locationName))).filter(Boolean).sort().map(name => (
+                                            <label key={name} className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer">
+                                                <input type="checkbox" checked={selectedMergeNames.has(name)} onChange={() => toggleMergeSelection(name)} className="accent-teal-500" />
+                                                <span className="truncate">{name}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+
+                                    {selectedMergeNames.size > 0 && (
+                                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                                            <input
+                                                type="text"
+                                                value={mergeCanonicalName}
+                                                onChange={(e) => setMergeCanonicalName(e.target.value)}
+                                                placeholder="Final hotspot name"
+                                                className="flex-1 min-w-[140px] bg-slate-950 border border-slate-800 text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:outline-none"
+                                            />
+                                            <button onClick={handleMergeHotspots} className="bg-teal-500 text-slate-950 font-bold px-4 py-1.5 rounded-lg text-xs hover:bg-teal-400 transition shrink-0">
+                                                Merge {selectedMergeNames.size} Selected
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         )}
                         {showImportPanel && (
@@ -1533,13 +1711,21 @@
                                                 <button key={tab} onClick={() => setStatusFilter(tab)} className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all ${statusFilter === tab ? 'bg-teal-500 text-slate-950' : 'bg-slate-950 text-slate-400 hover:text-white'}`}>{tab}</button>
                                             ))}
                                         </div>
-                                        <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                                            <span>Sort:</span>
-                                            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="bg-slate-950 border border-slate-800 rounded-lg text-slate-300 px-2.5 py-1 text-[10px]">
-                                                <option value="bird">Species</option>
-                                                <option value="location">Hotspot</option>
-                                                <option value="date">Date</option>
-                                            </select>
+                                        <div className="flex items-center gap-3">
+                                            <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg p-0.5 text-[10px]">
+                                                <button onClick={() => setListViewMode('sighting')} className={`px-2.5 py-1 rounded font-bold transition ${listViewMode === 'sighting' ? 'bg-teal-500 text-slate-950' : 'text-slate-400 hover:text-white'}`}>By Sighting</button>
+                                                <button onClick={() => setListViewMode('species')} className={`px-2.5 py-1 rounded font-bold transition ${listViewMode === 'species' ? 'bg-teal-500 text-slate-950' : 'text-slate-400 hover:text-white'}`}>By Species</button>
+                                            </div>
+                                            {listViewMode === 'sighting' && (
+                                                <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                                                    <span>Sort:</span>
+                                                    <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="bg-slate-950 border border-slate-800 rounded-lg text-slate-300 px-2.5 py-1 text-[10px]">
+                                                        <option value="bird">Species</option>
+                                                        <option value="location">Hotspot</option>
+                                                        <option value="date">Date</option>
+                                                    </select>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 
@@ -1581,7 +1767,87 @@
 
                                 <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
                                     <div className="divide-y divide-slate-800/60 max-h-[500px] overflow-y-auto">
-                                        {filteredRecords.length === 0 ? <div className="p-8 text-center text-slate-500 text-xs">No matching records.</div> : filteredRecords.map((r) => (
+                                        {listViewMode === 'species' ? (
+                                            speciesGroups.length === 0 ? <div className="p-8 text-center text-slate-500 text-xs">No matching records.</div> : speciesGroups.map((g) => {
+                                                const isExpanded = expandedSpecies.has(g.key);
+                                                return (
+                                                    <div key={g.key}>
+                                                        <div
+                                                            onClick={() => toggleSpeciesExpanded(g.key)}
+                                                            className="p-3.5 flex items-center justify-between gap-4 text-xs transition duration-150 cursor-pointer hover:bg-slate-900/60"
+                                                        >
+                                                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                                                                <span className="text-slate-500 text-[10px] w-3 shrink-0">{isExpanded ? '▾' : '▸'}</span>
+                                                                <BirdThumbnail birdName={g.displayName} />
+                                                                <div className="min-w-0 flex-1">
+                                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                                        <span className="font-extrabold text-white text-xs truncate">{g.displayName}</span>
+                                                                        {g.rare === 'Y' || g.rare === true ? <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded text-[8px] font-bold">★ Rare</span> : null}
+                                                                    </div>
+                                                                    <div className="text-slate-400 flex items-center gap-1.5 flex-wrap text-[11px] mt-0.5">
+                                                                        <span>📍 {g.locations.length} location{g.locations.length === 1 ? '' : 's'}</span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-2 shrink-0">
+                                                                <a
+                                                                    href={getEBirdUrl(g.displayName, taxonomyMap)}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                    className="px-2.5 py-1 rounded bg-slate-950 hover:bg-slate-800 text-teal-400 border border-slate-800 text-[10px] font-bold tracking-tight transition"
+                                                                >
+                                                                    eBird ↗
+                                                                </a>
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); toggleSeenForGroup(g); }}
+                                                                    title={g.isOverridden ? "Has manual overrides — click to flip all" : "Derived from your life list — click to override all"}
+                                                                    className={`px-3 py-1 rounded border transition text-[10px] font-bold ${g.seen ? 'bg-teal-500/10 text-teal-400 border-teal-500/20' : 'bg-slate-900 text-slate-400 border-slate-800'}`}
+                                                                >
+                                                                    {g.seen ? '✓ Seen' : 'Mark Seen'}{g.isOverridden ? ' *' : ''}
+                                                                </button>
+                                                                {g.isOverridden && (
+                                                                    <button
+                                                                        onClick={(e) => { e.stopPropagation(); resetSeenForGroup(g); }}
+                                                                        title="Revert all locations to life-list-derived status"
+                                                                        className="p-1.5 bg-slate-900 border border-slate-800 hover:text-teal-400 rounded-lg text-slate-500 transition text-[10px]"
+                                                                    >
+                                                                        ↺
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        {isExpanded && (
+                                                            <div className="bg-slate-950/50 divide-y divide-slate-800/40">
+                                                                {g.locations.map(r => (
+                                                                    <div key={r.id} className="pl-11 pr-3.5 py-2 flex items-center justify-between gap-3 text-[11px]">
+                                                                        <div className="min-w-0 flex-1">
+                                                                            <button onClick={() => setSelectedLocation(r.locationName)} className="text-slate-300 hover:text-teal-400 font-semibold truncate text-left">📍 {r.locationName}</button>
+                                                                            <span className="text-slate-500 ml-2">{r.lastReported}</span>
+                                                                        </div>
+                                                                        <div className="flex items-center gap-2 shrink-0">
+                                                                            {r.checklistId && (
+                                                                                <a
+                                                                                    href={`https://ebird.org/checklist/${r.checklistId}`}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    title="View the eBird checklist this sighting was reported on"
+                                                                                    className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-teal-400 border border-slate-800 text-[9px] font-bold transition"
+                                                                                >
+                                                                                    📋 Checklist ↗
+                                                                                </a>
+                                                                            )}
+                                                                            <button onClick={() => deleteRecord(r.id)} className="p-1 bg-slate-900 border border-slate-800 hover:text-red-400 rounded text-slate-500 transition text-[10px]">✕</button>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })
+                                        ) : (
+                                        filteredRecords.length === 0 ? <div className="p-8 text-center text-slate-500 text-xs">No matching records.</div> : filteredRecords.map((r) => (
                                             <div 
                                                 key={r.id} 
                                                 onClick={() => setSelectedBird(selectedBird === r.bird ? 'ALL' : r.bird)}
@@ -1649,7 +1915,8 @@
                                                     </button>
                                                 </div>
                                             </div>
-                                        ))}
+                                        ))
+                                        )}
                                     </div>
                                 </div>
                             </div>
