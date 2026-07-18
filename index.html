@@ -170,15 +170,12 @@
 
         function App() {
             const [rawData, setRawData] = useState(() => storageGet('cbc_rawData', INITIAL_RAW_DATA));
-            const [pastedData, setPastedData] = useState('');
-            const [showSyncPanel, setShowSyncPanel] = useState(false);
             const [showImportPanel, setShowImportPanel] = useState(false);
 
             // Multiple named eBird life lists (Common Names), so this site can be shared — a
             // friend uploads their own life list export and switches to it to see their own
-            // gaps, without anyone's data overwriting anyone else's. Seeded with the original
-            // life list under "My Life List" the first time this loads (backward-compatible
-            // with the previous single-life-list version of this app).
+            // gaps, without anyone's data overwriting anyone else's. Starts empty under "My
+            // Life List" until a real CSV is uploaded (Import > Upload Life List CSV).
             const [savedLifeLists, setSavedLifeLists] = useState(() => {
                 const existing = storageGetObject('cbc_savedLifeLists', null);
                 if (existing && Object.keys(existing).length > 0) {
@@ -192,8 +189,7 @@
                     });
                     if (Object.keys(sanitized).length > 0) return sanitized;
                 }
-                const legacyList = storageGetArray('cbc_lifeList', DEFAULT_LIFE_LIST);
-                return { default: { label: 'My Life List', names: legacyList } };
+                return { default: { label: 'My Life List', names: DEFAULT_LIFE_LIST } };
             });
             const [activeLifeListId, setActiveLifeListId] = useState(() => storageGet('cbc_activeLifeListId', 'default'));
             const [newLifeListLabel, setNewLifeListLabel] = useState('');
@@ -564,12 +560,32 @@
                 }
             }, [rawData]);
 
+            // Not every record is tagged with a region — only ones that came through an eBird
+            // sync are (manual entries, older docx imports, and anything added before region
+            // tagging existed are not). But a hotspot is a physical place, so if ANY sighting at
+            // "Race Point" is tagged US-MA-001, every other sighting at that same hotspot is
+            // fairly assumed to be too. Without this, hiding/filtering a region only catches the
+            // tagged subset and leaves untagged sightings at the same hotspots fully visible —
+            // which is exactly what made "Home" still zoom out to a hidden region's hotspots.
+            const locationRegionMap = useMemo(() => {
+                const map = {};
+                birdRecords.forEach(r => {
+                    if (r.region && !map[r.locationName]) map[r.locationName] = r.region;
+                });
+                return map;
+            }, [birdRecords]);
+            const getEffectiveRegion = (r) => r.region || locationRegionMap[r.locationName] || '';
+
             // birdRecords enriched with a computed `seen` field (life list match, or manual override),
             // with hidden hotspots excluded so they disappear from stats, map, and the list entirely.
             const enrichedRecords = useMemo(() => {
                 try {
                     return birdRecords
-                        .filter(r => !hiddenLocations.includes(r.locationName) && !(r.region && hiddenRegions.includes(r.region)))
+                        .filter(r => {
+                            if (hiddenLocations.includes(r.locationName)) return false;
+                            const effectiveRegion = getEffectiveRegion(r);
+                            return !(effectiveRegion && hiddenRegions.includes(effectiveRegion));
+                        })
                         .map(r => {
                             const overrideKey = `${r.locationName}|${r.bird}`.toLowerCase();
                             const isOverridden = Object.prototype.hasOwnProperty.call(seenOverrides, overrideKey);
@@ -594,7 +610,7 @@
                         r.coordinates.includes(hotspotSearchQuery);
                     const matchesLocation = selectedLocation === 'ALL' || r.locationName === selectedLocation;
                     const matchesBirdSelection = selectedBird === 'ALL' || r.bird === selectedBird;
-                    const matchesRegion = selectedRegion === 'ALL' || r.region === selectedRegion;
+                    const matchesRegion = selectedRegion === 'ALL' || getEffectiveRegion(r) === selectedRegion;
                     return matchesSpeciesSearch && matchesHotspotSearch && matchesLocation && matchesBirdSelection && matchesRegion && isWithinDateRange(r);
                 });
             }, [enrichedRecords, speciesSearchQuery, hotspotSearchQuery, selectedLocation, selectedBird, selectedRegion, dateRangeFilter, customDateFrom, customDateTo]);
@@ -1087,7 +1103,7 @@
                 setSelectedLocation('ALL');
                 const regionRecords = selectedRegion === 'ALL'
                     ? enrichedRecords
-                    : enrichedRecords.filter(r => r.region === selectedRegion);
+                    : enrichedRecords.filter(r => getEffectiveRegion(r) === selectedRegion);
                 const coords = regionRecords
                     .map(r => r.coordinates)
                     .filter(Boolean)
@@ -1258,6 +1274,25 @@
             const unhideRegion = (code) => {
                 setHiddenRegions(prev => prev.filter(r => r !== code));
                 showToast(`Restored region ${code}.`);
+            };
+
+            // Explicit, opt-in cleanup for sightings that didn't come from an eBird sync —
+            // manually added via "+ Sighting", pasted/imported before eBird sync existed, or
+            // from a docx/report upload (which also doesn't carry a region or checklist tag).
+            // A checklistId or an effective region is only ever set by the live eBird sync, so
+            // absence of both is used as "not eBird-sourced." Deliberately a manual button, not
+            // something that runs automatically — deleting sightings without asking first is
+            // the kind of thing that shouldn't happen silently.
+            const handleClearLegacyData = () => {
+                const legacy = birdRecords.filter(r => !r.checklistId && !getEffectiveRegion(r));
+                if (legacy.length === 0) {
+                    showToast("No non-eBird sightings found — everything's already eBird-sourced.");
+                    return;
+                }
+                if (!confirm(`Delete ${legacy.length} sighting(s) not sourced from eBird (manually entered, or predating eBird sync)?\n\nEverything that came from an eBird sync is kept. This can't be undone.`)) return;
+                const kept = birdRecords.filter(r => r.checklistId || getEffectiveRegion(r));
+                setRawData(recordsToTSV(kept));
+                showToast(`Removed ${legacy.length} non-eBird sighting(s). ${kept.length} eBird-sourced sighting(s) remain.`);
             };
 
             // Auto-sync once per day on load, if a key is present.
@@ -1457,7 +1492,6 @@
                                     <span>🔥</span> Today's Targets{stats.todayTargets.length > 0 ? ` (${stats.todayTargets.length})` : ''}
                                 </button>
                                 <button onClick={() => setIsAddOpen(true)} className="bg-teal-500 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs shadow-lg hover:bg-teal-400 transition">+ Sighting</button>
-                                <button onClick={() => { setPastedData(rawData); setShowSyncPanel(!showSyncPanel); }} className="bg-slate-800 text-slate-300 border border-slate-700 font-semibold px-4 py-2 rounded-xl text-xs hover:bg-slate-700 transition">Sync TSV</button>
                                 <button onClick={() => setShowImportPanel(!showImportPanel)} className="bg-slate-800 text-slate-300 border border-slate-700 font-semibold px-4 py-2 rounded-xl text-xs hover:bg-slate-700 transition">Import</button>
                                 <button onClick={() => setShowSettingsPanel(!showSettingsPanel)} className="bg-slate-800 text-slate-300 border border-slate-700 font-semibold px-4 py-2 rounded-xl text-xs hover:bg-slate-700 transition relative">
                                     Settings
@@ -1542,6 +1576,21 @@
                                     </button>
                                 </div>
                                 <p className="text-[9px] text-slate-500">Auto-syncs once a day whenever this page is opened (this is a static PWA with no server, so it can't run in the background — opening the app is what triggers the daily check). Pulls both recent and notable/rare sightings for your region and merges them in without touching existing entries or manual seen overrides.</p>
+
+                                <div className="border-t border-slate-800 pt-4 space-y-2">
+                                    <h4 className="text-xs font-bold text-slate-200">Non-eBird Sightings</h4>
+                                    {(() => {
+                                        const legacyCount = birdRecords.filter(r => !r.checklistId && !getEffectiveRegion(r)).length;
+                                        return legacyCount === 0 ? (
+                                            <p className="text-[10px] text-slate-500">None — every sighting currently in this dataset is eBird-sourced.</p>
+                                        ) : (
+                                            <div className="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl p-3">
+                                                <p className="text-[10px] text-slate-400">{legacyCount} sighting{legacyCount === 1 ? '' : 's'} not from an eBird sync (manually entered, or predating eBird sync). Keep them, or clear them out now that eBird sync covers everything going forward.</p>
+                                                <button onClick={handleClearLegacyData} className="bg-slate-800 hover:bg-rose-500 hover:text-white text-slate-300 font-bold px-3 py-1.5 rounded-lg text-[10px] transition shrink-0">Clear {legacyCount}</button>
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
 
                                 <div className="border-t border-slate-800 pt-4">
                                     <h4 className="text-xs font-bold text-slate-200 mb-2">Hidden Hotspots ({hiddenLocations.length})</h4>
@@ -1699,19 +1748,6 @@
                                 )}
                             </div>
                         )}
-                        {showSyncPanel && (
-                            <div className="bg-slate-900 border border-teal-500/30 rounded-2xl p-5 space-y-4 shadow-xl">
-                                <div className="flex justify-between items-center">
-                                    <h3 className="text-sm font-bold text-teal-400">Database Editor</h3>
-                                    <button onClick={() => setShowSyncPanel(false)} className="text-slate-400 text-xs px-2 hover:text-white">Close</button>
-                                </div>
-                                <textarea className="w-full h-44 bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-[10px] text-emerald-400 focus:outline-none" value={pastedData} onChange={(e) => setPastedData(e.target.value)} />
-                                <div className="flex justify-end gap-2 text-xs">
-                                    <button onClick={() => { setRawData(pastedData); setShowSyncPanel(false); showToast("Checklist synced!"); }} className="bg-teal-500 text-slate-950 px-4 py-1.5 rounded font-bold">Apply</button>
-                                </div>
-                            </div>
-                        )}
-
                         {stats.todayTargets.length > 0 && (
                             <div className="bg-gradient-to-r from-rose-950/60 to-slate-900 border border-rose-500/30 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
                                 <div className="flex items-center gap-3">
@@ -1955,10 +1991,10 @@
                                         </select>
                                         <select value={selectedRegion} onChange={(e) => setSelectedRegion(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-300 rounded-xl px-4 py-2 text-xs focus:outline-none">
                                             <option value="ALL">🌐 All Regions</option>
-                                            {Array.from(new Set(enrichedRecords.map(r => r.region).filter(Boolean))).sort().map((region, idx) => (
+                                            {Array.from(new Set(enrichedRecords.map(r => getEffectiveRegion(r)).filter(Boolean))).sort().map((region, idx) => (
                                                 <option key={idx} value={region}>{region}</option>
                                             ))}
-                                            {enrichedRecords.some(r => !r.region) && <option value="">Untagged / manual entries</option>}
+                                            {enrichedRecords.some(r => !getEffectiveRegion(r)) && <option value="">Untagged / manual entries</option>}
                                         </select>
                                     </div>
                                     <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
