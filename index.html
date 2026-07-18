@@ -225,6 +225,12 @@
             // it like any personal credential and don't publish/share this file publicly.
             const [ebirdApiKey, setEbirdApiKey] = useState(() => storageGet('cbc_ebirdApiKey', 'l531bs6l4t92'));
             const [ebirdRegions, setEbirdRegions] = useState(() => storageGetArray('cbc_ebirdRegions', ['US-MA-001'])); // Barnstable County, MA
+            // Hidden regions stay configured (so a trip home doesn't mean re-typing region
+            // codes) but are paused: excluded from view everywhere, and skipped by the daily
+            // sync so it doesn't keep pulling data for a place you're not currently tracking.
+            // This is deliberately separate from removeRegion, which deletes the data outright —
+            // hiding is the "I'll be back" option, removing is the "I'm done with this" option.
+            const [hiddenRegions, setHiddenRegions] = useState(() => storageGetArray('cbc_hiddenRegions', []));
             const [newRegionInput, setNewRegionInput] = useState('');
             const [taxonomyMap, setTaxonomyMap] = useState(() => storageGetObject('cbc_taxonomyMap', {}));
             const [taxonomySyncedAt, setTaxonomySyncedAt] = useState(() => storageGet('cbc_taxonomySyncedAt', null));
@@ -237,6 +243,7 @@
 
             useEffect(() => { storageSet('cbc_ebirdApiKey', ebirdApiKey); }, [ebirdApiKey]);
             useEffect(() => { storageSet('cbc_ebirdRegions', ebirdRegions); }, [ebirdRegions]);
+            useEffect(() => { storageSet('cbc_hiddenRegions', hiddenRegions); }, [hiddenRegions]);
             useEffect(() => { storageSet('cbc_taxonomyMap', taxonomyMap); }, [taxonomyMap]);
             useEffect(() => { storageSet('cbc_taxonomySyncedAt', taxonomySyncedAt); }, [taxonomySyncedAt]);
             useEffect(() => { storageSet('cbc_ebirdSyncedAt', ebirdSyncedAt); }, [ebirdSyncedAt]);
@@ -562,7 +569,7 @@
             const enrichedRecords = useMemo(() => {
                 try {
                     return birdRecords
-                        .filter(r => !hiddenLocations.includes(r.locationName))
+                        .filter(r => !hiddenLocations.includes(r.locationName) && !(r.region && hiddenRegions.includes(r.region)))
                         .map(r => {
                             const overrideKey = `${r.locationName}|${r.bird}`.toLowerCase();
                             const isOverridden = Object.prototype.hasOwnProperty.call(seenOverrides, overrideKey);
@@ -571,7 +578,7 @@
                 } catch (e) {
                     return [];
                 }
-            }, [birdRecords, lifeListSet, seenOverrides, hiddenLocations]);
+            }, [birdRecords, lifeListSet, seenOverrides, hiddenLocations, hiddenRegions]);
 
             // Everything the stat cards and "Today's Targets" should reflect: search, date
             // range, hotspot, and region filters — but NOT the status tabs (Seen/Unseen/Rare/
@@ -1192,15 +1199,18 @@
                         setTaxonomySyncedAt(Date.now());
                     }
                     // Regions are fetched sequentially (not Promise.all) to stay well within eBird's
-                    // rate limits when several regions are configured.
+                    // rate limits when several regions are configured. Hidden regions are skipped
+                    // entirely — paused, not just filtered from view — so a trip away doesn't
+                    // waste API calls pulling data for a place you're not tracking right now.
+                    const activeRegions = ebirdRegions.filter(code => !hiddenRegions.includes(code));
                     let allEntries = [];
-                    for (const regionCode of ebirdRegions) {
+                    for (const regionCode of activeRegions) {
                         const entries = await fetchRegionSightings(ebirdApiKey, regionCode);
                         allEntries = allEntries.concat(entries);
                     }
                     mergeReportEntries(allEntries, { silent: true });
                     setEbirdSyncedAt(Date.now());
-                    if (!silent) showToast(`Synced with eBird — ${allEntries.length} sightings checked across ${ebirdRegions.length} region(s).`);
+                    if (!silent) showToast(`Synced with eBird — ${allEntries.length} sightings checked across ${activeRegions.length} active region(s)${hiddenRegions.length > 0 ? ` (${hiddenRegions.length} hidden, skipped)` : ''}.`);
                 } catch (err) {
                     const msg = err && err.message ? err.message : 'Sync failed';
                     setSyncError(msg);
@@ -1229,11 +1239,25 @@
                 if (!proceed) return;
 
                 setEbirdRegions(prev => prev.filter(r => r !== code));
+                setHiddenRegions(prev => prev.filter(r => r !== code));
                 if (affected.length > 0) {
                     const updated = birdRecords.filter(r => r.region !== code);
                     setRawData(recordsToTSV(updated));
                 }
                 showToast(`Removed region ${code}${affected.length > 0 ? ` and ${affected.length} record(s)` : ''}.`);
+            };
+
+            // Hide = pause, not delete: stays in ebirdRegions (so the code doesn't need
+            // re-typing later), excluded from view via enrichedRecords, and skipped by the sync
+            // loop below so it stops pulling new data while you're not there.
+            const hideRegion = (code) => {
+                setHiddenRegions(prev => (prev.includes(code) ? prev : [...prev, code]));
+                if (selectedRegion === code) setSelectedRegion('ALL');
+                showToast(`Hid region ${code} — sync paused for it too. Restore it in Settings any time.`);
+            };
+            const unhideRegion = (code) => {
+                setHiddenRegions(prev => prev.filter(r => r !== code));
+                showToast(`Restored region ${code}.`);
             };
 
             // Auto-sync once per day on load, if a key is present.
@@ -1312,9 +1336,12 @@
             // so hotspots and species not present in the uploaded report are kept, and manual
             // seen overrides (keyed by location+bird) are untouched.
             const mergeReportEntries = (entries, { silent = false } = {}) => {
-                // Hidden hotspots stay excluded from future merges too, so a daily eBird sync
-                // (or re-uploading the same report) doesn't silently bring them back.
-                entries = entries.filter(e => !hiddenLocations.includes(e.locationName));
+                // Hidden hotspots (and hidden regions) stay excluded from future merges too, so
+                // a daily eBird sync (or re-uploading the same report) doesn't silently bring
+                // them back. The sync loop already skips hidden regions before fetching at all;
+                // this is a second line of defense for any other path that merges entries in
+                // (manual report uploads that happen to carry a region tag, etc).
+                entries = entries.filter(e => !hiddenLocations.includes(e.locationName) && !(e.region && hiddenRegions.includes(e.region)));
                 const noNewEntries = entries.length === 0;
                 const byKey = new Map(birdRecords.map(r => [`${r.locationName}|${r.bird}`.toLowerCase(), r]));
                 let added = 0, updated = 0;
@@ -1479,15 +1506,25 @@
                                         </div>
                                         {ebirdRegions.length > 0 && (
                                             <div className="flex flex-wrap gap-1.5 pt-1">
-                                                {ebirdRegions.map(code => (
-                                                    <span key={code} className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[10px] font-mono text-slate-300">
-                                                        {code}
-                                                        <button onClick={() => removeRegion(code)} className="text-slate-500 hover:text-rose-400 font-bold">✕</button>
-                                                    </span>
-                                                ))}
+                                                {ebirdRegions.map(code => {
+                                                    const isHidden = hiddenRegions.includes(code);
+                                                    return (
+                                                        <span key={code} className={`flex items-center gap-1.5 border rounded-lg px-2 py-1 text-[10px] font-mono transition ${isHidden ? 'bg-slate-950/40 border-slate-800/60 text-slate-500' : 'bg-slate-950 border-slate-800 text-slate-300'}`}>
+                                                            {code}{isHidden ? ' (hidden)' : ''}
+                                                            <button
+                                                                onClick={() => (isHidden ? unhideRegion(code) : hideRegion(code))}
+                                                                title={isHidden ? 'Unhide — resume showing and syncing this region' : 'Hide — pause this region without deleting its data'}
+                                                                className="hover:text-teal-400 font-bold"
+                                                            >
+                                                                {isHidden ? '👁️' : '🙈'}
+                                                            </button>
+                                                            <button onClick={() => removeRegion(code)} title="Remove permanently — also deletes its data" className="text-slate-500 hover:text-rose-400 font-bold">✕</button>
+                                                        </span>
+                                                    );
+                                                })}
                                             </div>
                                         )}
-                                        <p className="text-[9px] text-slate-500">Sync pulls recent + notable sightings for every region listed here. Barnstable County, MA is US-MA-001 — region codes appear in eBird's Explore page URLs (county = subnational2, state = subnational1).</p>
+                                        <p className="text-[9px] text-slate-500">Sync pulls recent + notable sightings for every non-hidden region listed here. 🙈 pauses a region (keeps its data, stops syncing it, hides it from view) without deleting anything — good for "I'll be back." ✕ removes it and deletes its data for good. Barnstable County, MA is US-MA-001 — region codes appear in eBird's Explore page URLs (county = subnational2, state = subnational1).</p>
                                     </div>
                                 </div>
                                 <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-[10px] text-slate-400">
