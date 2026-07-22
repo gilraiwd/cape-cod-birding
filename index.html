@@ -87,8 +87,11 @@
 
         // Shown in the About modal. Bump SITE_LAST_UPDATED and add a line to CHANGELOG (newest
         // first) whenever this file is meaningfully changed.
-        const SITE_LAST_UPDATED = 'July 11, 2026';
+        const SITE_LAST_UPDATED = 'July 22, 2026';
         const CHANGELOG = [
+            'Fixed the map/hotspot list showing far more locations than a filter should — filtering to Rare (for example) was still plotting every hotspot in the dataset at low opacity as "context," which read as barely filtered at all. It now shows only what actually matches.',
+            'Removed the "Sync TSV" manual paste-and-apply panel entirely — eBird sync is now the primary way data gets in. Added an explicit, confirm-before-deleting option in Settings to clear out non-eBird-sourced sightings, for anyone who wants a clean eBird-only dataset.',
+            'Regions can now be hidden (paused) instead of only deleted — keeps the data and the region code, stops syncing it, hides it from view, one tap to restore. Useful for "I\'m traveling, don\'t track my home region for now." Also fixed hiding a region not fully excluding it from the map/Home button when some of its sightings predated region tagging.',
             'Stat cards now count unique species, not raw sightings — a bird reported at 5 hotspots counted as 5 before; fixed wording ("Rare species" no longer says "checked off").',
             'Stat cards, and the eBird-links species-code sync, hardened against corrupted saved data so a stale/mismatched value degrades gracefully instead of crashing the app.',
             'Added an About panel (this one) with a changelog.',
@@ -783,11 +786,11 @@
 
             const mapLocations = useMemo(() => {
                 const locMap = {};
-                
+
                 filteredRecords.forEach(r => {
                     if (!locMap[r.locationName]) {
                         locMap[r.locationName] = {
-                            name: r.locationName, coords: r.coordinates, total: 0, seen: 0, unseenRares: 0, isActive: true, birds: []
+                            name: r.locationName, coords: r.coordinates, total: 0, seen: 0, unseenRares: 0, birds: []
                         };
                     }
                     const item = locMap[r.locationName];
@@ -800,30 +803,8 @@
                     item.birds.push(r);
                 });
 
-                enrichedRecords.forEach(r => {
-                    if (!locMap[r.locationName]) {
-                        locMap[r.locationName] = {
-                            name: r.locationName, coords: r.coordinates, total: 0, seen: 0, unseenRares: 0, isActive: false, birds: []
-                        };
-                    }
-                    const item = locMap[r.locationName];
-                    if (!item.isActive) {
-                        item.total += 1;
-                        if (r.seen === 'Y') item.seen += 1;
-                        if (r.rare === 'Y') {
-                            item.rares += 1;
-                            if (r.seen === 'N') item.unseenRares += 1;
-                        }
-                        item.birds.push(r);
-                    }
-                });
-
-                return Object.values(locMap).sort((a, b) => {
-                    if (a.isActive && !b.isActive) return -1;
-                    if (!a.isActive && b.isActive) return 1;
-                    return b.unseenRares - a.unseenRares || b.total - a.total;
-                });
-            }, [filteredRecords, enrichedRecords]);
+                return Object.values(locMap).sort((a, b) => b.unseenRares - a.unseenRares || b.total - a.total);
+            }, [filteredRecords]);
 
             // Map Booting Pipeline. Leaflet + the markercluster plugin are both loaded
             // synchronously via <script> tags in <head>, so window.L is guaranteed ready before
@@ -961,7 +942,7 @@
                     // clamped to a sensible range so a handful of species and a hundred both read clearly.
                     const baseSize = Math.max(14, Math.min(42, 14 + Math.sqrt(loc.total) * 4));
                     const size = isFocused ? baseSize + 10 : baseSize;
-                    const opacity = loc.isActive ? 0.92 : 0.32;
+                    const opacity = 0.92;
                     const ring = isFocused ? '3px solid #ffffff' : '1.5px solid #020617';
 
                     const marker = L.marker([lat, lng], {
@@ -985,7 +966,7 @@
                     marker.on('click', () => setSelectedLocation(loc.name));
                     marker.addTo(group);
 
-                    if (loc.isActive) bounds.push([lat, lng]);
+                    bounds.push([lat, lng]);
                 });
 
                 if (selectedLocation === 'ALL' && bounds.length > 0) {
@@ -1945,11 +1926,11 @@
                                             const progressPct = loc.total > 0 ? Math.round((loc.seen / loc.total) * 100) : 0;
                                             const isFocused = selectedLocation === loc.name;
                                             return (
-                                                <div key={idx} onClick={() => setSelectedLocation(isFocused ? 'ALL' : loc.name)} className={`p-3 rounded-xl border transition cursor-pointer text-xs ${isFocused ? 'bg-slate-850 border-teal-500 shadow-md' : 'bg-slate-950 border-slate-800 hover:border-slate-700'} ${!loc.isActive ? 'opacity-40' : ''}`}>
+                                                <div key={idx} onClick={() => setSelectedLocation(isFocused ? 'ALL' : loc.name)} className={`p-3 rounded-xl border transition cursor-pointer text-xs ${isFocused ? 'bg-slate-850 border-teal-500 shadow-md' : 'bg-slate-950 border-slate-800 hover:border-slate-700'}`}>
                                                     <div className="flex justify-between items-start gap-2 mb-1">
                                                         <h3 className="font-bold text-slate-200 leading-tight">{loc.name}</h3>
                                                         <div className="flex items-center gap-1 shrink-0">
-                                                            {loc.unseenRares > 0 && loc.isActive && <span className="bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1.5 py-0.5 rounded text-[8px] font-black">⚠️ {loc.unseenRares} Rare Target</span>}
+                                                            {loc.unseenRares > 0 && <span className="bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1.5 py-0.5 rounded text-[8px] font-black">⚠️ {loc.unseenRares} Rare Target</span>}
                                                             <button
                                                                 onClick={(e) => { e.stopPropagation(); hideLocation(loc.name); }}
                                                                 title="Hide this hotspot (can restore in Settings)"
