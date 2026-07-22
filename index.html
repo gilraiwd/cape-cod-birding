@@ -89,6 +89,11 @@
         // first) whenever this file is meaningfully changed.
         const SITE_LAST_UPDATED = 'July 22, 2026';
         const CHANGELOG = [
+            'Added a "likely time to see it" hint (🕐) — flags species with a clear time-of-day pattern (e.g. "usually early mornings") once there\'s enough eBird timestamp data, based on real observation times. Toggle in Settings between combined-across-all-hotspots or per-hotspot calculation.',
+            'Added a "sync status" banner (no API key / sync failed / haven\'t synced today), an Activity Over Time chart (sightings per week, collapsible), an optional weather overlay on the map (off by default, no API key needed), and a shareable read-only HTML snapshot export.',
+            'Reverted a few reworded labels back to their originals per feedback (Encountered species, remaining targets, Priority targets) — the rest of the plain-language pass stays.',
+            'Added a "Near Me" distance filter (5/10/15/25/50 mi) and a "Nearest" sort option, using your device\'s location.',
+            'Simplified the wording on the stat cards, status tabs, and map section — plainer language throughout instead of jargon.',
             'Fixed the map/hotspot list showing far more locations than a filter should — filtering to Rare (for example) was still plotting every hotspot in the dataset at low opacity as "context," which read as barely filtered at all. It now shows only what actually matches.',
             'Removed the "Sync TSV" manual paste-and-apply panel entirely — eBird sync is now the primary way data gets in. Added an explicit, confirm-before-deleting option in Settings to clear out non-eBird-sourced sightings, for anyone who wants a clean eBird-only dataset.',
             'Regions can now be hidden (paused) instead of only deleted — keeps the data and the region code, stops syncing it, hides it from view, one tap to restore. Useful for "I\'m traveling, don\'t track my home region for now." Also fixed hiding a region not fully excluding it from the map/Home button when some of its sightings predated region tagging.',
@@ -239,6 +244,19 @@
             const [showSettingsPanel, setShowSettingsPanel] = useState(false);
             const [showAboutModal, setShowAboutModal] = useState(false);
             const [legendExpanded, setLegendExpanded] = useState(false); // collapsed by default — mostly for mobile screen space
+            // Optional weather overlay — off by default. Uses Open-Meteo (no API key needed) for
+            // current conditions at whichever hotspot is focused, or the map's default center
+            // otherwise. Entirely separate from eBird; just a nice-to-have for planning a trip.
+            const [showWeatherOverlay, setShowWeatherOverlay] = useState(() => storageGet('cbc_showWeather', false));
+            useEffect(() => { storageSet('cbc_showWeather', showWeatherOverlay); }, [showWeatherOverlay]);
+            const [weatherData, setWeatherData] = useState(null);
+            const [weatherLoading, setWeatherLoading] = useState(false);
+            // "Likely time to see it" hint scope — 'combined' looks at a species' timestamped
+            // sightings across every hotspot (bigger sample, a general "this bird is a morning
+            // bird" pattern); 'perHotspot' looks only at that one hotspot's sightings (smaller
+            // sample, but "morning at THIS spot specifically" is more directly actionable).
+            const [timePatternScope, setTimePatternScope] = useState(() => storageGet('cbc_timePatternScope', 'combined'));
+            useEffect(() => { storageSet('cbc_timePatternScope', timePatternScope); }, [timePatternScope]);
 
             useEffect(() => { storageSet('cbc_ebirdApiKey', ebirdApiKey); }, [ebirdApiKey]);
             useEffect(() => { storageSet('cbc_ebirdRegions', ebirdRegions); }, [ebirdRegions]);
@@ -508,6 +526,11 @@
             const [selectedLocation, setSelectedLocation] = useState('ALL');
             const [selectedBird, setSelectedBird] = useState('ALL'); // Added bird selection state
             const [selectedRegion, setSelectedRegion] = useState('ALL'); // Filter by eBird region code
+            // "Near Me" distance filter — myLocation is only fetched when the person actually
+            // picks a distance, not proactively, since geolocation is a permission prompt.
+            const [myLocation, setMyLocation] = useState(null); // {lat, lng} | null
+            const [maxDistanceMiles, setMaxDistanceMiles] = useState('ALL'); // 'ALL' | '5' | '10' | '15' | '25' | '50'
+            const [locatingForFilter, setLocatingForFilter] = useState(false);
             const [sortBy, setSortBy] = useState('bird');
             const [listViewMode, setListViewMode] = useState('species'); // 'sighting' | 'species'
             const [expandedSpecies, setExpandedSpecies] = useState(() => new Set());
@@ -614,9 +637,15 @@
                     const matchesLocation = selectedLocation === 'ALL' || r.locationName === selectedLocation;
                     const matchesBirdSelection = selectedBird === 'ALL' || r.bird === selectedBird;
                     const matchesRegion = selectedRegion === 'ALL' || getEffectiveRegion(r) === selectedRegion;
-                    return matchesSpeciesSearch && matchesHotspotSearch && matchesLocation && matchesBirdSelection && matchesRegion && isWithinDateRange(r);
+                    let matchesDistance = true;
+                    if (maxDistanceMiles !== 'ALL' && myLocation) {
+                        const parts = (r.coordinates || '').split(',').map(parseFloat);
+                        matchesDistance = parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) &&
+                            haversineMiles(myLocation.lat, myLocation.lng, parts[0], parts[1]) <= Number(maxDistanceMiles);
+                    }
+                    return matchesSpeciesSearch && matchesHotspotSearch && matchesLocation && matchesBirdSelection && matchesRegion && matchesDistance && isWithinDateRange(r);
                 });
-            }, [enrichedRecords, speciesSearchQuery, hotspotSearchQuery, selectedLocation, selectedBird, selectedRegion, dateRangeFilter, customDateFrom, customDateTo]);
+            }, [enrichedRecords, speciesSearchQuery, hotspotSearchQuery, selectedLocation, selectedBird, selectedRegion, maxDistanceMiles, myLocation, dateRangeFilter, customDateFrom, customDateTo]);
 
             const stats = useMemo(() => {
                 // Counts are per unique SPECIES, not per sighting — a bird reported at 5
@@ -662,6 +691,40 @@
                     rareCount, priorityCount, uniqueSpots, todayTargets
                 };
             }, [statsScopedRecords]);
+
+            // Activity Over Time: sightings and unique species per week, last 8 weeks (Sunday-
+            // starting), based on whatever's currently in scope (respects the same filters as
+            // the stat cards). Built as plain bars rather than pulling in a charting library —
+            // one less CDN script that can fail to load for something this simple.
+            const activityByWeek = useMemo(() => {
+                const now = new Date();
+                const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const currentWeekStart = new Date(startOfToday);
+                currentWeekStart.setDate(currentWeekStart.getDate() - currentWeekStart.getDay());
+
+                const weeks = [];
+                for (let i = 7; i >= 0; i--) {
+                    const weekStart = new Date(currentWeekStart);
+                    weekStart.setDate(weekStart.getDate() - i * 7);
+                    weeks.push({ start: weekStart, label: weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), count: 0, species: new Set() });
+                }
+
+                statsScopedRecords.forEach(r => {
+                    const d = parseFlexibleDate(r.lastReported);
+                    if (isNaN(d)) return;
+                    for (let i = weeks.length - 1; i >= 0; i--) {
+                        if (d >= weeks[i].start) {
+                            weeks[i].count += 1;
+                            weeks[i].species.add(normalizeBirdName(r.bird));
+                            break;
+                        }
+                    }
+                });
+
+                const maxCount = Math.max(1, ...weeks.map(w => w.count));
+                return weeks.map(w => ({ label: w.label, count: w.count, speciesCount: w.species.size, pct: Math.round((w.count / maxCount) * 100) }));
+            }, [statsScopedRecords]);
+            const [showActivityChart, setShowActivityChart] = useState(false);
 
             // Visible diagnostics for the date filter — shows the actual counts per bucket and
             // what "today" the app is computing, directly in the UI, rather than requiring dev
@@ -720,6 +783,13 @@
                 showToast("Entry deleted.");
             };
 
+            const distanceOf = (r) => {
+                if (!myLocation) return Infinity;
+                const parts = (r.coordinates || '').split(',').map(parseFloat);
+                if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) return Infinity;
+                return haversineMiles(myLocation.lat, myLocation.lng, parts[0], parts[1]);
+            };
+
             const filteredRecords = useMemo(() => {
                 return statsScopedRecords.filter(r => {
                     if (statusFilter === 'SEEN') return r.seen === 'Y';
@@ -732,9 +802,10 @@
                     if (sortBy === 'bird') return a.bird.localeCompare(b.bird);
                     if (sortBy === 'date') return parseFlexibleDate(b.lastReported) - parseFlexibleDate(a.lastReported);
                     if (sortBy === 'status') return b.seen.localeCompare(a.seen);
+                    if (sortBy === 'distance') return distanceOf(a) - distanceOf(b);
                     return 0;
                 });
-            }, [statsScopedRecords, statusFilter, sortBy]);
+            }, [statsScopedRecords, statusFilter, sortBy, myLocation]);
 
             // "By Species" view: groups filteredRecords by species (matching the same normalized
             // name used for life-list comparisons, so a qualified form like "Willet (Eastern)"
@@ -765,6 +836,56 @@
                     return [];
                 }
             }, [filteredRecords]);
+
+            // "Likely time to see it" — built from enrichedRecords (not the transiently-filtered
+            // list) so a pattern doesn't flicker in and out of existence just because you've got
+            // "Last 7 days" selected; this is meant to reflect the full history you have.
+            const speciesTimePatterns = useMemo(() => {
+                const groups = new Map();
+                enrichedRecords.forEach(r => {
+                    (r.timeHistory || []).forEach(h => {
+                        const hour = parseInt((h.time || '').split(':')[0], 10);
+                        if (isNaN(hour)) return;
+                        const bucket = getTimeBucket(hour);
+                        const key = normalizeBirdName(r.bird);
+                        if (!groups.has(key)) groups.set(key, {});
+                        groups.get(key)[bucket] = (groups.get(key)[bucket] || 0) + 1;
+                    });
+                });
+                const patterns = new Map();
+                groups.forEach((buckets, key) => {
+                    const pattern = computeTimePattern(buckets);
+                    if (pattern) patterns.set(key, pattern);
+                });
+                return patterns;
+            }, [enrichedRecords]);
+
+            const hotspotTimePatterns = useMemo(() => {
+                const groups = new Map();
+                enrichedRecords.forEach(r => {
+                    (r.timeHistory || []).forEach(h => {
+                        const hour = parseInt((h.time || '').split(':')[0], 10);
+                        if (isNaN(hour)) return;
+                        const bucket = getTimeBucket(hour);
+                        const key = `${r.locationName}|${normalizeBirdName(r.bird)}`;
+                        if (!groups.has(key)) groups.set(key, {});
+                        groups.get(key)[bucket] = (groups.get(key)[bucket] || 0) + 1;
+                    });
+                });
+                const patterns = new Map();
+                groups.forEach((buckets, key) => {
+                    const pattern = computeTimePattern(buckets);
+                    if (pattern) patterns.set(key, pattern);
+                });
+                return patterns;
+            }, [enrichedRecords]);
+
+            const getTimePattern = (bird, locationName) => {
+                if (timePatternScope === 'perHotspot') {
+                    return hotspotTimePatterns.get(`${locationName}|${normalizeBirdName(bird)}`) || null;
+                }
+                return speciesTimePatterns.get(normalizeBirdName(bird)) || null;
+            };
 
             const toggleSpeciesExpanded = (key) => {
                 setExpandedSpecies(prev => {
@@ -805,6 +926,49 @@
 
                 return Object.values(locMap).sort((a, b) => b.unseenRares - a.unseenRares || b.total - a.total);
             }, [filteredRecords]);
+
+            // Weather target: whichever hotspot is focused, else the top hotspot currently
+            // shown, else the default center. Memoized to a plain coordinate STRING (not the
+            // mapLocations array) so the fetch effect below only re-runs when the actual target
+            // changes, not on every unrelated re-render.
+            const weatherTargetCoords = useMemo(() => {
+                if (!showWeatherOverlay) return null;
+                if (selectedLocation !== 'ALL') {
+                    const loc = mapLocations.find(l => l.name === selectedLocation);
+                    if (loc && loc.coords) return loc.coords;
+                }
+                if (mapLocations.length > 0 && mapLocations[0].coords) return mapLocations[0].coords;
+                return '41.80, -70.30';
+            }, [showWeatherOverlay, selectedLocation, mapLocations]);
+
+            useEffect(() => {
+                if (!showWeatherOverlay || !weatherTargetCoords) {
+                    setWeatherData(null);
+                    return;
+                }
+                const parts = weatherTargetCoords.split(',').map(parseFloat);
+                if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) {
+                    setWeatherData(null);
+                    return;
+                }
+                let cancelled = false;
+                setWeatherLoading(true);
+                fetch(`https://api.open-meteo.com/v1/forecast?latitude=${parts[0]}&longitude=${parts[1]}&current_weather=true&temperature_unit=fahrenheit&wind_speed_unit=mph`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (!cancelled) {
+                            setWeatherData(data.current_weather || null);
+                            setWeatherLoading(false);
+                        }
+                    })
+                    .catch(() => {
+                        if (!cancelled) {
+                            setWeatherData(null);
+                            setWeatherLoading(false);
+                        }
+                    });
+                return () => { cancelled = true; };
+            }, [showWeatherOverlay, weatherTargetCoords]);
 
             // Map Booting Pipeline. Leaflet + the markercluster plugin are both loaded
             // synchronously via <script> tags in <head>, so window.L is guaranteed ready before
@@ -1041,6 +1205,7 @@
                     (position) => {
                         const { latitude, longitude } = position.coords;
                         setLocating(false);
+                        setMyLocation({ lat: latitude, lng: longitude });
                         mapInstance.current.setView([latitude, longitude], 14);
                         if (myLocationMarker.current) {
                             myLocationMarker.current.setLatLng([latitude, longitude]);
@@ -1061,6 +1226,32 @@
                     (error) => {
                         setLocating(false);
                         showToast("Couldn't get your location — check location permissions.");
+                    },
+                    { enableHighAccuracy: true, timeout: 10000 }
+                );
+            };
+
+            // "Near Me" distance filter — only asks for location the first time a distance is
+            // picked (reuses it after that, including a location already grabbed via Find Me).
+            const handleDistanceFilterChange = (value) => {
+                setMaxDistanceMiles(value);
+                if (value === 'ALL' || myLocation) return;
+                if (!navigator.geolocation) {
+                    showToast("Geolocation not supported by this device.");
+                    setMaxDistanceMiles('ALL');
+                    return;
+                }
+                setLocatingForFilter(true);
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        setLocatingForFilter(false);
+                        setMyLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
+                        showToast(`Location set — showing hotspots within ${value} mi.`);
+                    },
+                    () => {
+                        setLocatingForFilter(false);
+                        showToast("Couldn't get your location — check location permissions.");
+                        setMaxDistanceMiles('ALL');
                     },
                     { enableHighAccuracy: true, timeout: 10000 }
                 );
@@ -1127,6 +1318,69 @@
                 showToast(`Exported ${filteredRecords.length} record(s).`);
             };
 
+            // Exports the current filtered view as a standalone static HTML file — no React, no
+            // CDN dependencies, nothing that can break. Meant for sharing a read-only snapshot
+            // with someone who doesn't need (or want) the whole app, just the list as it stands
+            // right now.
+            const handleExportSnapshot = () => {
+                if (filteredRecords.length === 0) {
+                    showToast("Nothing to export — adjust filters first.");
+                    return;
+                }
+                const escapeHtml = (val) => String(val ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+                const rows = filteredRecords.map(r => `
+                    <tr>
+                        <td>${escapeHtml(r.bird)}</td>
+                        <td>${escapeHtml(r.locationName)}</td>
+                        <td>${escapeHtml(r.lastReported)}</td>
+                        <td>${r.rare === 'Y' ? '★ Rare' : ''}</td>
+                        <td>${r.seen === 'Y' ? '✓ Seen' : ''}</td>
+                        <td>${r.checklistId ? `<a href="https://ebird.org/checklist/${escapeHtml(r.checklistId)}" target="_blank" rel="noopener noreferrer">View</a>` : ''}</td>
+                    </tr>`).join('');
+                const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Birding Console Snapshot — ${new Date().toLocaleDateString()}</title>
+<style>
+    body { font-family: -apple-system, system-ui, sans-serif; background: #020617; color: #e2e8f0; margin: 0; padding: 24px 16px; }
+    .wrap { max-width: 800px; margin: 0 auto; }
+    h1 { color: #2dd4bf; font-size: 20px; margin-bottom: 4px; }
+    .meta { color: #94a3b8; font-size: 12px; margin-bottom: 20px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; color: #94a3b8; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; padding: 8px; border-bottom: 1px solid #334155; }
+    td { padding: 8px; border-bottom: 1px solid #1e293b; }
+    tr:hover { background: #0f172a; }
+    a { color: #2dd4bf; }
+    .footer { color: #64748b; font-size: 11px; margin-top: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+    <h1>🦅 Birding Console — Snapshot</h1>
+    <p class="meta">Generated ${new Date().toLocaleString()} · ${filteredRecords.length} sighting(s) · read-only, not connected to the live app</p>
+    <table>
+        <thead><tr><th>Species</th><th>Hotspot</th><th>Last Reported</th><th>Rare</th><th>Seen</th><th>Checklist</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table>
+    <p class="footer">This is a static snapshot and won't update — open Birding Console for live data.</p>
+</div>
+</body>
+</html>`;
+                const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const stamp = new Date().toISOString().slice(0, 10);
+                a.href = url;
+                a.download = `birding-console-snapshot-${stamp}.html`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showToast(`Snapshot saved — ${filteredRecords.length} record(s), shareable as a plain HTML file.`);
+            };
+
             // --- Import: eBird life list CSV -------------------------------------------------
             // --- eBird API: species code taxonomy sync ---------------------------------------
             // Downloads eBird's official species taxonomy once (comName -> speciesCode for
@@ -1162,15 +1416,22 @@
                 const [recent, notable] = await Promise.all([recentRes.json(), notableRes.json()]);
 
                 const notableKeys = new Set(notable.map(o => `${o.locId}|${o.speciesCode}`));
-                const toEntry = (o) => ({
-                    locationName: o.locName || 'Unknown Location',
-                    coordinates: (o.lat != null && o.lng != null) ? `${o.lat}, ${o.lng}` : '',
-                    bird: o.comName,
-                    rare: notableKeys.has(`${o.locId}|${o.speciesCode}`) ? 'Y' : 'N',
-                    lastReported: formatLongDate(parseFlexibleDate(o.obsDt)),
-                    region: regionCode,
-                    checklistId: o.subId || ''
-                });
+                const toEntry = (o) => {
+                    const time = extractTimeOfDay(o.obsDt);
+                    return {
+                        locationName: o.locName || 'Unknown Location',
+                        coordinates: (o.lat != null && o.lng != null) ? `${o.lat}, ${o.lng}` : '',
+                        bird: o.comName,
+                        rare: notableKeys.has(`${o.locId}|${o.speciesCode}`) ? 'Y' : 'N',
+                        lastReported: formatLongDate(parseFlexibleDate(o.obsDt)),
+                        region: regionCode,
+                        checklistId: o.subId || '',
+                        // A single new observation's time-of-day, to be folded into the hotspot+
+                        // species record's accumulated timeHistory during merge (see
+                        // mergeReportEntries) — one sighting alone can't reveal a pattern.
+                        timeHistory: (time && o.subId) ? [{ checklistId: o.subId, time }] : []
+                    };
+                };
                 return [...recent, ...notable].filter(o => o.comName && o.locName).map(toEntry);
             };
 
@@ -1359,6 +1620,19 @@
                 // (manual report uploads that happen to carry a region tag, etc).
                 entries = entries.filter(e => !hiddenLocations.includes(e.locationName) && !(e.region && hiddenRegions.includes(e.region)));
                 const noNewEntries = entries.length === 0;
+                const MAX_TIME_HISTORY = 30; // rolling cap so this can't grow unbounded for a very common species
+                const mergeTimeHistory = (existingHistory, incoming) => {
+                    if (!incoming || incoming.length === 0) return existingHistory || [];
+                    const history = existingHistory ? [...existingHistory] : [];
+                    const seen = new Set(history.map(h => h.checklistId));
+                    incoming.forEach(h => {
+                        if (!seen.has(h.checklistId)) {
+                            history.push(h);
+                            seen.add(h.checklistId);
+                        }
+                    });
+                    return history.length > MAX_TIME_HISTORY ? history.slice(-MAX_TIME_HISTORY) : history;
+                };
                 const byKey = new Map(birdRecords.map(r => [`${r.locationName}|${r.bird}`.toLowerCase(), r]));
                 let added = 0, updated = 0;
                 entries.forEach(entry => {
@@ -1374,7 +1648,11 @@
                             region: existing.region || entry.region || '',
                             // Checklist link should point at whichever report the winning date
                             // came from, not be stuck on the original one forever.
-                            checklistId: newer ? (entry.checklistId || existing.checklistId || '') : (existing.checklistId || entry.checklistId || '')
+                            checklistId: newer ? (entry.checklistId || existing.checklistId || '') : (existing.checklistId || entry.checklistId || ''),
+                            // Unlike the fields above, this ACCUMULATES rather than picks a
+                            // winner — the "likely time of day" hint needs many samples over
+                            // many days, not just whatever the latest sighting happened to be.
+                            timeHistory: mergeTimeHistory(existing.timeHistory, entry.timeHistory)
                         });
                         updated++;
                     } else {
@@ -1386,7 +1664,8 @@
                             rare: entry.rare,
                             lastReported: entry.lastReported,
                             region: entry.region || '',
-                            checklistId: entry.checklistId || ''
+                            checklistId: entry.checklistId || '',
+                            timeHistory: entry.timeHistory || []
                         });
                         added++;
                     }
@@ -1557,6 +1836,30 @@
                                     </button>
                                 </div>
                                 <p className="text-[9px] text-slate-500">Auto-syncs once a day whenever this page is opened (this is a static PWA with no server, so it can't run in the background — opening the app is what triggers the daily check). Pulls both recent and notable/rare sightings for your region and merges them in without touching existing entries or manual seen overrides.</p>
+
+                                <div className="border-t border-slate-800 pt-4">
+                                    <h4 className="text-xs font-bold text-slate-200 mb-2">Display Options</h4>
+                                    <label className="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl p-3 cursor-pointer">
+                                        <div>
+                                            <span className="text-xs text-slate-200 font-bold">Show weather on the map</span>
+                                            <p className="text-[10px] text-slate-500 mt-0.5">Current temperature and conditions for whichever hotspot is focused. Off by default — this is unrelated to eBird, just a free weather lookup (Open-Meteo, no account needed).</p>
+                                        </div>
+                                        <input
+                                            type="checkbox"
+                                            checked={showWeatherOverlay}
+                                            onChange={(e) => setShowWeatherOverlay(e.target.checked)}
+                                            className="w-5 h-5 accent-teal-500 shrink-0"
+                                        />
+                                    </label>
+                                    <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 mt-2">
+                                        <span className="text-xs text-slate-200 font-bold">"Likely time to see it" hint</span>
+                                        <p className="text-[10px] text-slate-500 mt-0.5 mb-2">Built from eBird sightings that included a time, once there are enough of them for a real pattern (not just one lucky morning). Choose how it's calculated:</p>
+                                        <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-[10px] w-fit">
+                                            <button onClick={() => setTimePatternScope('combined')} className={`px-2.5 py-1 rounded font-bold transition ${timePatternScope === 'combined' ? 'bg-teal-500 text-slate-950' : 'text-slate-400 hover:text-white'}`}>All hotspots combined</button>
+                                            <button onClick={() => setTimePatternScope('perHotspot')} className={`px-2.5 py-1 rounded font-bold transition ${timePatternScope === 'perHotspot' ? 'bg-teal-500 text-slate-950' : 'text-slate-400 hover:text-white'}`}>Per hotspot</button>
+                                        </div>
+                                    </div>
+                                </div>
 
                                 <div className="border-t border-slate-800 pt-4 space-y-2">
                                     <h4 className="text-xs font-bold text-slate-200">Non-eBird Sightings</h4>
@@ -1729,6 +2032,20 @@
                                 )}
                             </div>
                         )}
+                        {!ebirdApiKey && (
+                            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+                                <p className="text-xs text-slate-400">No eBird API key set yet — add one in Settings to start syncing sightings automatically.</p>
+                                <button onClick={() => setShowSettingsPanel(true)} className="bg-teal-500 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs hover:bg-teal-400 transition shrink-0">Open Settings</button>
+                            </div>
+                        )}
+                        {ebirdApiKey && !isSyncing && (syncError || !ebirdSyncedAt || Date.now() - ebirdSyncedAt > 24 * 60 * 60 * 1000) && (
+                            <div className="bg-amber-950/30 border border-amber-500/30 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+                                <p className="text-xs text-amber-300">
+                                    {syncError ? `Today's eBird sync ran into a problem: ${syncError}` : "Haven't synced with eBird yet today."}
+                                </p>
+                                <button onClick={() => runEbirdSync({ silent: false })} className="bg-amber-500 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs hover:bg-amber-400 transition shrink-0">Sync Now</button>
+                            </div>
+                        )}
                         {stats.todayTargets.length > 0 && (
                             <div className="bg-gradient-to-r from-rose-950/60 to-slate-900 border border-rose-500/30 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
                                 <div className="flex items-center gap-3">
@@ -1751,52 +2068,77 @@
                                 <span className="text-[10px] text-slate-400 uppercase tracking-widest font-black">Encountered species</span>
                                 <div className="flex items-baseline gap-2 mt-2">
                                     <span className="text-3xl font-black text-white">{stats.seenCount}</span>
-                                    <span className="text-slate-500 text-xs">/ {stats.total} seen</span>
+                                    <span className="text-slate-500 text-xs">of {stats.total}</span>
                                 </div>
                                 <div className="mt-3">
                                     <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
                                         <div className="bg-teal-500 h-full transition-all" style={{ width: `${stats.seenPercentage}%` }} />
                                     </div>
-                                    <span className="text-[9px] text-teal-400 mt-1 block font-bold">{stats.seenPercentage}% Complete</span>
+                                    <span className="text-[9px] text-teal-400 mt-1 block font-bold">{stats.seenPercentage}% complete</span>
                                 </div>
                             </div>
 
                             <div onClick={() => handleMetricClick('UNSEEN')} className={`p-4 rounded-2xl border transition-all flex flex-col justify-between cursor-pointer ${statusFilter === 'UNSEEN' ? 'bg-sky-950/40 border-sky-400' : 'bg-slate-900 border-slate-800'}`}>
-                                <span className="text-[10px] text-slate-400 uppercase tracking-widest font-black">Unseen species</span>
+                                <span className="text-[10px] text-slate-400 uppercase tracking-widest font-black">Still Need to See</span>
                                 <div className="flex items-baseline gap-2 mt-2">
                                     <span className="text-3xl font-black text-sky-400">{stats.unseenCount}</span>
                                     <span className="text-slate-500 text-xs">remaining targets</span>
                                 </div>
-                                <span className="text-[9px] text-slate-400 mt-3 block font-bold">Click to filter remaining checklist</span>
+                                <span className="text-[9px] text-slate-400 mt-3 block font-bold">Tap to see what's left</span>
                             </div>
 
                             <div onClick={() => handleMetricClick('RARE')} className={`p-4 rounded-2xl border transition-all flex flex-col justify-between cursor-pointer ${statusFilter === 'RARE' ? 'bg-amber-950/40 border-amber-400' : 'bg-slate-900 border-slate-800'}`}>
                                 <span className="text-[10px] text-amber-400 uppercase tracking-widest font-black flex items-center gap-1.5">
                                     <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-ping" />
-                                    Rare species
+                                    Rare Birds
                                 </span>
                                 <div className="flex items-baseline gap-2 mt-2">
                                     <span className="text-3xl font-black text-amber-300">{stats.rareCount}</span>
                                     <span className="text-slate-500 text-xs">reported</span>
                                 </div>
-                                <span className="text-[9px] text-slate-400 mt-3 block font-bold">Click to show rare distribution paths</span>
+                                <span className="text-[9px] text-slate-400 mt-3 block font-bold">Tap to see where they were spotted</span>
                             </div>
 
                             <div onClick={() => handleMetricClick('PRIORITY')} className={`p-4 rounded-2xl border transition-all flex flex-col justify-between cursor-pointer ${statusFilter === 'PRIORITY' ? 'bg-rose-950/40 border-rose-400' : 'bg-slate-900 border-slate-800'}`}>
                                 <span className="text-[10px] text-rose-400 uppercase tracking-widest font-black">Priority targets</span>
                                 <div className="flex items-baseline gap-2 mt-2">
                                     <span className="text-3xl font-black text-rose-400">{stats.priorityCount}</span>
-                                    <span className="text-slate-500 text-xs">unseen & rare</span>
+                                    <span className="text-slate-500 text-xs">rare & not yet seen</span>
                                 </div>
-                                <span className="text-[9px] text-rose-300 mt-3 block font-bold">Click to locate urgent search zones</span>
+                                <span className="text-[9px] text-rose-300 mt-3 block font-bold">Tap to find where to look</span>
                             </div>
+                        </section>
+
+                        <section className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+                            <button onClick={() => setShowActivityChart(!showActivityChart)} className="flex items-center justify-between w-full text-left">
+                                <h2 className="text-xs font-extrabold uppercase text-teal-400 tracking-wider">Activity Over Time</h2>
+                                <span className="text-slate-500 text-xs">{showActivityChart ? '▾ Hide' : '▸ Show'}</span>
+                            </button>
+                            {showActivityChart && (
+                                <div className="mt-4">
+                                    <div className="flex items-end justify-between gap-2 h-32">
+                                        {activityByWeek.map((w, idx) => (
+                                            <div key={idx} className="flex-1 flex flex-col items-center justify-end h-full gap-1" title={`${w.label}: ${w.count} sighting(s), ${w.speciesCount} species`}>
+                                                <span className="text-[9px] text-slate-400 font-bold">{w.count || ''}</span>
+                                                <div className="w-full bg-teal-500/70 hover:bg-teal-400 rounded-t transition-all" style={{ height: `${Math.max(w.pct, w.count > 0 ? 4 : 0)}%` }} />
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="flex items-center justify-between gap-2 mt-2">
+                                        {activityByWeek.map((w, idx) => (
+                                            <span key={idx} className="flex-1 text-center text-[8px] text-slate-500">{w.label}</span>
+                                        ))}
+                                    </div>
+                                    <p className="text-[10px] text-slate-500 mt-3">Sightings per week, last 8 weeks (matches your current filters). Hover a bar for species count.</p>
+                                </div>
+                            )}
                         </section>
 
                         <section className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-2xl relative overflow-hidden">
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
                                 <div>
                                     <div className="flex items-center gap-2">
-                                        <span className="bg-teal-500/10 text-teal-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider">Live GIS Basemap</span>
+                                        <span className="bg-teal-500/10 text-teal-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider">Live Map</span>
                                         {selectedLocation !== 'ALL' && <span className="text-slate-500 text-xs font-mono">Filter active: {selectedLocation}</span>}
                                     </div>
                                     <h2 className="text-base font-black text-white mt-1">Sighting Map</h2>
@@ -1834,6 +2176,19 @@
                                         >
                                             🏠
                                         </button>
+                                    )}
+                                    {showWeatherOverlay && (weatherLoading || weatherData) && (
+                                        <div className="absolute top-[118px] right-3 z-[500] bg-slate-950/90 border border-slate-800 rounded-xl px-3 py-2 text-[11px] text-slate-200 backdrop-blur-sm shadow-lg">
+                                            {weatherLoading ? (
+                                                <span className="text-slate-400">Loading weather…</span>
+                                            ) : weatherData ? (
+                                                <div className="flex items-center gap-1.5">
+                                                    <span>{describeWeatherCode(weatherData.weathercode).emoji}</span>
+                                                    <span className="font-bold">{Math.round(weatherData.temperature)}°F</span>
+                                                    <span className="text-slate-400">· {Math.round(weatherData.windspeed)} mph wind</span>
+                                                </div>
+                                            ) : null}
+                                        </div>
                                     )}
                                     {!mapReady && (
                                         <div className="absolute inset-0 flex items-center justify-center p-6 pointer-events-none">
@@ -1879,10 +2234,10 @@
 
                                 <div className="lg:col-span-4 bg-slate-950/40 border border-slate-800/80 rounded-2xl p-4 flex flex-col justify-between space-y-4">
                                     <div>
-                                        <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 mb-2">Focused Hotspot details</h3>
+                                        <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 mb-2">Hotspot Details</h3>
                                         {selectedLocation === 'ALL' ? (
                                             <div className="space-y-3 py-6 text-center">
-                                                <p className="text-slate-500 text-xs italic">Select any plotted node on the map, or select from the registry below to investigate focused regional wildlife densities.</p>
+                                                <p className="text-slate-500 text-xs italic">Tap a spot on the map, or pick one from the list below, to see details.</p>
                                             </div>
                                         ) : (
                                             (() => {
@@ -1918,7 +2273,7 @@
                             <div className="lg:col-span-5">
                                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-lg">
                                     <div>
-                                        <h2 className="text-xs font-extrabold uppercase text-teal-400 tracking-wider">Hotspots ranking matrix</h2>
+                                        <h2 className="text-xs font-extrabold uppercase text-teal-400 tracking-wider">Top Hotspots</h2>
                                         <p className="text-[11px] text-slate-400 mt-1">Real-time status tracking updates on geographic markers</p>
                                     </div>
                                     <div className="space-y-2.5 max-h-[480px] overflow-y-auto pr-1">
@@ -1961,7 +2316,7 @@
 
                             <div className="lg:col-span-7 space-y-4">
                                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4 shadow-md">
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                                         <input type="text" placeholder="Search species..." value={speciesSearchQuery} onChange={(e) => setSpeciesSearchQuery(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-xl px-4 py-2 text-xs focus:outline-none" />
                                         <input type="text" placeholder="Search hotspot..." value={hotspotSearchQuery} onChange={(e) => setHotspotSearchQuery(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-xl px-4 py-2 text-xs focus:outline-none" />
                                         <select value={selectedLocation} onChange={(e) => setSelectedLocation(e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-slate-300 rounded-xl px-4 py-2 text-xs focus:outline-none">
@@ -1977,11 +2332,31 @@
                                             ))}
                                             {enrichedRecords.some(r => !getEffectiveRegion(r)) && <option value="">Untagged / manual entries</option>}
                                         </select>
+                                        <select
+                                            value={maxDistanceMiles}
+                                            onChange={(e) => handleDistanceFilterChange(e.target.value)}
+                                            disabled={locatingForFilter}
+                                            title="Show only hotspots within this distance of you"
+                                            className="w-full bg-slate-950 border border-slate-800 text-slate-300 rounded-xl px-4 py-2 text-xs focus:outline-none disabled:opacity-60"
+                                        >
+                                            <option value="ALL">{locatingForFilter ? '📍 Locating…' : '📍 Any distance'}</option>
+                                            <option value="5">Within 5 mi</option>
+                                            <option value="10">Within 10 mi</option>
+                                            <option value="15">Within 15 mi</option>
+                                            <option value="25">Within 25 mi</option>
+                                            <option value="50">Within 50 mi</option>
+                                        </select>
                                     </div>
                                     <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
                                         <div className="flex flex-wrap gap-1">
-                                            {['ALL', 'SEEN', 'UNSEEN', 'RARE', 'PRIORITY'].map(tab => (
-                                                <button key={tab} onClick={() => setStatusFilter(tab)} className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all ${statusFilter === tab ? 'bg-teal-500 text-slate-950' : 'bg-slate-950 text-slate-400 hover:text-white'}`}>{tab}</button>
+                                            {[
+                                                { id: 'ALL', label: 'All' },
+                                                { id: 'SEEN', label: 'Seen' },
+                                                { id: 'UNSEEN', label: 'Unseen' },
+                                                { id: 'RARE', label: 'Rare' },
+                                                { id: 'PRIORITY', label: "Priority" }
+                                            ].map(tab => (
+                                                <button key={tab.id} onClick={() => setStatusFilter(tab.id)} className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all ${statusFilter === tab.id ? 'bg-teal-500 text-slate-950' : 'bg-slate-950 text-slate-400 hover:text-white'}`}>{tab.label}</button>
                                             ))}
                                         </div>
                                         <div className="flex items-center gap-3">
@@ -1996,6 +2371,7 @@
                                                         <option value="bird">Species</option>
                                                         <option value="location">Hotspot</option>
                                                         <option value="date">Date</option>
+                                                        {myLocation && <option value="distance">Nearest</option>}
                                                     </select>
                                                 </div>
                                             )}
@@ -2023,6 +2399,7 @@
                                             )}
                                         </div>
                                         <button onClick={handleExportCSV} title="Export current filtered list as CSV" className="bg-slate-950 border border-slate-800 hover:border-teal-500 hover:text-teal-400 text-slate-400 px-3 py-1 rounded-lg text-[10px] font-bold transition">⬇ Export CSV</button>
+                                        <button onClick={handleExportSnapshot} title="Export a shareable, read-only static HTML page of the current view" className="bg-slate-950 border border-slate-800 hover:border-teal-500 hover:text-teal-400 text-slate-400 px-3 py-1 rounded-lg text-[10px] font-bold transition">📄 Snapshot</button>
                                     </div>
                                     <div className="text-[9px] text-slate-500 font-mono pt-0.5">
                                         App considers "today" to be {dateDiagnostics.todayLabel} · matching: {dateDiagnostics.today} today, {dateDiagnostics.last24h} in "Last 24h" (today+yesterday), {dateDiagnostics.week} this week, {dateDiagnostics.month} this month{dateDiagnostics.unparseable > 0 ? `, ${dateDiagnostics.unparseable} unparseable` : ''} (of {enrichedRecords.length} total)
@@ -2059,6 +2436,10 @@
                                                                     </div>
                                                                     <div className="text-slate-400 flex items-center gap-1.5 flex-wrap text-[11px] mt-0.5">
                                                                         <span>📍 {g.locations.length} location{g.locations.length === 1 ? '' : 's'}</span>
+                                                                        {timePatternScope === 'combined' && (() => {
+                                                                            const pattern = getTimePattern(g.displayName, null);
+                                                                            return pattern ? <span className="text-sky-400" title={`${pattern.count} of ${pattern.total} timestamped sightings`}>🕐 Usually {pattern.bucket}s</span> : null;
+                                                                        })()}
                                                                     </div>
                                                                 </div>
                                                             </div>
@@ -2097,6 +2478,10 @@
                                                                         <div className="min-w-0 flex-1">
                                                                             <button onClick={() => setSelectedLocation(r.locationName)} className="text-slate-300 hover:text-teal-400 font-semibold truncate text-left">📍 {r.locationName}</button>
                                                                             <span className="text-slate-500 ml-2">{r.lastReported}</span>
+                                                                            {timePatternScope === 'perHotspot' && (() => {
+                                                                                const pattern = getTimePattern(r.bird, r.locationName);
+                                                                                return pattern ? <span className="text-sky-400 ml-2" title={`${pattern.count} of ${pattern.total} timestamped sightings here`}>🕐 Usually {pattern.bucket}s</span> : null;
+                                                                            })()}
                                                                         </div>
                                                                         <div className="flex items-center gap-2 shrink-0">
                                                                             {r.checklistId && (
@@ -2138,6 +2523,10 @@
                                                         </div>
                                                         <div className="text-slate-400 flex items-center gap-1.5 flex-wrap text-[11px] mt-0.5">
                                                             <span>📍 {r.locationName}</span>
+                                                            {(() => {
+                                                                const pattern = getTimePattern(r.bird, r.locationName);
+                                                                return pattern ? <span className="text-sky-400" title={`${pattern.count} of ${pattern.total} timestamped sightings`}>🕐 Usually {pattern.bucket}s</span> : null;
+                                                            })()}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -2365,9 +2754,24 @@
         // derived at render time by comparing each bird against the uploaded eBird life list
         // (see computeSeen / useLifeListSet below), with room for manual overrides that survive
         // TSV re-imports (see seenOverrides state in App). A "Region" column (eBird region code,
-        // e.g. US-MA-001) was added for multi-region support, and a "Checklist ID" column (eBird
+        // e.g. US-MA-001) was added for multi-region support, a "Checklist ID" column (eBird
         // submission ID, e.g. S123456789) links a sighting back to the exact checklist it came
-        // from. Both are optional/blank for older or manually-added rows.
+        // from, and a "Time History" column packs multiple past "HH:MM" observation times for
+        // this hotspot+species (eBird-sourced only) as "checklistId@HH:MM" pairs joined by ";" —
+        // this drives the "likely time of day" hint, which needs several samples, not just the
+        // latest one. All optional/blank for older or manually-added rows.
+        function serializeTimeHistory(history) {
+            if (!history || history.length === 0) return '';
+            return history.map(h => `${h.checklistId}@${h.time}`).join(';');
+        }
+        function deserializeTimeHistory(str) {
+            if (!str) return [];
+            return str.split(';').filter(Boolean).map(pair => {
+                const [checklistId, time] = pair.split('@');
+                return { checklistId: checklistId || '', time: time || '' };
+            }).filter(h => h.time);
+        }
+
         function parseTSV(text) {
             const lines = text.trim().split('\n');
             const result = [];
@@ -2387,6 +2791,7 @@
                 const date = cols[4]?.trim() || "";
                 const region = cols[5]?.trim() || "";
                 const checklistId = cols[6]?.trim() || "";
+                const timeHistory = deserializeTimeHistory(cols[7]?.trim() || "");
 
                 if (loc !== "") {
                     currentLoc = loc;
@@ -2401,14 +2806,15 @@
                     rare: rare,
                     lastReported: date,
                     region: region,
-                    checklistId: checklistId
+                    checklistId: checklistId,
+                    timeHistory: timeHistory
                 });
             }
             return result;
         }
 
         function recordsToTSV(records) {
-            const header = "Location Name\tCoordinates\tBird\tRare (Y/N)\tLast Reported\tRegion\tChecklist ID";
+            const header = "Location Name\tCoordinates\tBird\tRare (Y/N)\tLast Reported\tRegion\tChecklist ID\tTime History";
             let lastLoc = "";
             let lastCoords = "";
             const rows = records.map(r => {
@@ -2420,9 +2826,57 @@
                     lastLoc = r.locationName;
                     lastCoords = r.coordinates;
                 }
-                return `${locCol}\t${coordCol}\t${r.bird}\t${r.rare}\t${r.lastReported}\t${r.region || ''}\t${r.checklistId || ''}`;
+                return `${locCol}\t${coordCol}\t${r.bird}\t${r.rare}\t${r.lastReported}\t${r.region || ''}\t${r.checklistId || ''}\t${serializeTimeHistory(r.timeHistory)}`;
             });
             return [header, ...rows].join('\n');
+        }
+
+        // Straight-line distance in miles between two lat/lng points (haversine formula).
+        // Used for the "Near Me" distance filter — good enough for "how far is this hotspot"
+        // even though it's not driving distance.
+        function haversineMiles(lat1, lng1, lat2, lng2) {
+            const toRad = (deg) => deg * Math.PI / 180;
+            const R = 3958.8; // Earth's radius in miles
+            const dLat = toRad(lat2 - lat1);
+            const dLng = toRad(lng2 - lng1);
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        // Maps Open-Meteo's WMO weather codes to a plain description + emoji for the optional
+        // weather overlay. Not exhaustive — grouped into the categories that actually matter
+        // for deciding whether to go birding.
+        function describeWeatherCode(code) {
+            if (code === 0) return { emoji: '☀️', text: 'Clear' };
+            if (code >= 1 && code <= 3) return { emoji: '⛅', text: 'Partly cloudy' };
+            if (code === 45 || code === 48) return { emoji: '🌫️', text: 'Foggy' };
+            if (code >= 51 && code <= 67) return { emoji: '🌦️', text: 'Rain' };
+            if (code >= 71 && code <= 77) return { emoji: '🌨️', text: 'Snow' };
+            if (code >= 80 && code <= 82) return { emoji: '🌧️', text: 'Rain showers' };
+            if (code >= 95) return { emoji: '⛈️', text: 'Thunderstorms' };
+            return { emoji: '🌡️', text: 'Conditions' };
+        }
+
+        // Buckets an hour (0-23) into a plain time-of-day label for the "likely time to see it"
+        // hint. Night wraps around midnight (9pm-5am) since that's how people actually think
+        // about it, not as two separate ranges.
+        function getTimeBucket(hour) {
+            if (hour >= 5 && hour < 8) return 'early morning';
+            if (hour >= 8 && hour < 11) return 'morning';
+            if (hour >= 11 && hour < 14) return 'midday';
+            if (hour >= 14 && hour < 17) return 'afternoon';
+            if (hour >= 17 && hour < 21) return 'evening';
+            return 'night';
+        }
+
+        // Only calls it a "pattern" with enough samples and a real majority — otherwise this is
+        // just noise dressed up as insight. Both thresholds are deliberately conservative.
+        function computeTimePattern(bucketCounts, minSamples = 4, threshold = 0.6) {
+            const total = Object.values(bucketCounts).reduce((a, b) => a + b, 0);
+            if (total < minSamples) return null;
+            const [topBucket, topCount] = Object.entries(bucketCounts).sort((a, b) => b[1] - a[1])[0];
+            if (topCount / total < threshold) return null;
+            return { bucket: topBucket, count: topCount, total };
         }
 
         // Strips parenthetical subspecies/form qualifiers and normalizes case for matching,
@@ -2454,6 +2908,16 @@
                 return new Date(`${isoMatch[1]}T${isoMatch[2] || '00:00'}:00`);
             }
             return new Date(trimmed);
+        }
+
+        // Pulls a bare "HH:MM" time-of-day out of an eBird "YYYY-MM-DD HH:MM" observation
+        // timestamp, or '' if the observer didn't log a time (eBird allows date-only entries).
+        // Deliberately kept as its own field, completely separate from lastReported/
+        // parseFlexibleDate — that date logic has been the source of more than one bug already,
+        // and this feature (the "likely time of day" hint) doesn't need to touch it at all.
+        function extractTimeOfDay(obsDt) {
+            const match = /(\d{1,2}):(\d{2})$/.exec(String(obsDt || '').trim());
+            return match ? `${match[1].padStart(2, '0')}:${match[2]}` : '';
         }
 
         // Parses an uploaded eBird life list CSV export and returns a sorted array of unique
