@@ -89,6 +89,7 @@
         // first) whenever this file is meaningfully changed.
         const SITE_LAST_UPDATED = 'July 22, 2026';
         const CHANGELOG = [
+            'Added Backup & Transfer to Settings — export everything (sightings, life lists, settings) as one file, import it on another device. This app has no account/server, so this is the only way to move your data between devices (e.g. phone to computer).',
             'Sighting times now shown alongside the date wherever available. Added a custom mileage option to the "Near Me" filter, a key explaining the "likely time" buckets, a clickable weather badge (links to the full forecast), and removed the hardcoded eBird API key — starts empty now, set it in Settings.',
             'Added a "likely time to see it" hint (🕐) — flags species with a clear time-of-day pattern (e.g. "usually early mornings") once there\'s enough eBird timestamp data, based on real observation times. Toggle in Settings between combined-across-all-hotspots or per-hotspot calculation.',
             'Added a "sync status" banner (no API key / sync failed / haven\'t synced today), an Activity Over Time chart (sightings per week, collapsible), an optional weather overlay on the map (off by default, no API key needed), and a shareable read-only HTML snapshot export.',
@@ -213,6 +214,7 @@
             const [hiddenLocations, setHiddenLocations] = useState(() => storageGetArray('cbc_hiddenLocations', []));
             const lifeListFileRef = useRef(null);
             const reportFileRef = useRef(null);
+            const backupFileRef = useRef(null);
 
             useEffect(() => { storageSet('cbc_rawData', rawData); }, [rawData]);
             useEffect(() => { storageSet('cbc_savedLifeLists', savedLifeLists); }, [savedLifeLists]);
@@ -1384,6 +1386,59 @@
                 showToast(`Snapshot saved — ${filteredRecords.length} record(s), shareable as a plain HTML file.`);
             };
 
+            // --- Backup & Transfer: move everything to another device ------------------------
+            // There's no account/server here, so this is the only way to get your data from
+            // one device to another — bundle every cbc_* localStorage key into one JSON file,
+            // and restore it wholesale from that file later (overwriting whatever's on the
+            // device doing the importing).
+            const handleExportBackup = () => {
+                const backup = {};
+                for (let i = 0; i < window.localStorage.length; i++) {
+                    const key = window.localStorage.key(i);
+                    if (key && key.startsWith('cbc_')) {
+                        backup[key] = window.localStorage.getItem(key);
+                    }
+                }
+                if (Object.keys(backup).length === 0) {
+                    showToast("Nothing to back up yet.");
+                    return;
+                }
+                const payload = { app: 'Birding Console', exportedAt: new Date().toISOString(), data: backup };
+                const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const stamp = new Date().toISOString().slice(0, 10);
+                a.href = url;
+                a.download = `birding-console-backup-${stamp}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showToast(`Backup downloaded — ${Object.keys(backup).length} item(s). Import it on the other device via Settings.`);
+            };
+
+            const handleImportBackup = async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file) return;
+                try {
+                    const text = await file.text();
+                    const payload = JSON.parse(text);
+                    const data = payload && payload.data ? payload.data : payload; // tolerate a raw dump too
+                    const keys = Object.keys(data || {}).filter(k => k.startsWith('cbc_'));
+                    if (keys.length === 0) {
+                        showToast("That doesn't look like a Birding Console backup file.");
+                        return;
+                    }
+                    if (!confirm(`Import this backup? It will replace everything currently on this device (sightings, life lists, settings — ${keys.length} item(s) total) with what's in the file. This can't be undone.`)) return;
+                    keys.forEach(k => window.localStorage.setItem(k, data[k]));
+                    showToast("Backup imported — reloading…");
+                    setTimeout(() => window.location.reload(), 800);
+                } catch (err) {
+                    showToast("Failed to read that backup file.");
+                }
+            };
+
             // --- Import: eBird life list CSV -------------------------------------------------
             // --- eBird API: species code taxonomy sync ---------------------------------------
             // Downloads eBird's official species taxonomy once (comName -> speciesCode for
@@ -1976,6 +2031,18 @@
                                             ))}
                                         </div>
                                     )}
+                                </div>
+
+                                <div className="border-t border-slate-800 pt-4 space-y-2">
+                                    <h4 className="text-xs font-bold text-slate-200">Backup & Transfer</h4>
+                                    <p className="text-[10px] text-slate-500">
+                                        This app has no account and no server — everything lives only in this browser, on this device. To use it on another device (like your phone and your computer), export a backup here and import it there. Note the file includes your eBird API key in plain text — treat it like a password, don't share it publicly.
+                                    </p>
+                                    <div className="flex flex-wrap gap-2 pt-1">
+                                        <button onClick={handleExportBackup} className="bg-teal-500 text-slate-950 font-bold px-4 py-1.5 rounded-lg text-xs hover:bg-teal-400 transition">⬇ Export Backup</button>
+                                        <button onClick={() => backupFileRef.current?.click()} className="bg-slate-800 text-slate-300 border border-slate-700 font-bold px-4 py-1.5 rounded-lg text-xs hover:bg-slate-700 transition">⬆ Import Backup</button>
+                                        <input ref={backupFileRef} type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
+                                    </div>
                                 </div>
                             </div>
                         )}
